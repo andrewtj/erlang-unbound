@@ -21,7 +21,7 @@ typedef struct _unbound_drv_t {
     ErlDrvTermData term_resolve;
     ErlDrvTermData term_result;
     ErlDrvTermData term_question;
-    ErlDrvTermData term_response;
+    ErlDrvTermData term_callback;
     ErlDrvTermData term_true;
     ErlDrvTermData term_false;
 } unbound_drv_t;
@@ -86,9 +86,9 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
     dd->term_error = driver_mk_atom("error");
     dd->term_undefined = driver_mk_atom("undefined");
     dd->term_resolve = driver_mk_atom("resolve");
-    dd->term_result = driver_mk_atom("result");
-    dd->term_question = driver_mk_atom("question");
-    dd->term_response = driver_mk_atom("response");
+    dd->term_result = driver_mk_atom("ub_result");
+    dd->term_question = driver_mk_atom("ub_question");
+    dd->term_callback = driver_mk_atom("ub_callback");
     dd->term_true = driver_mk_atom("true");
     dd->term_false = driver_mk_atom("false");
     return (ErlDrvData) dd;
@@ -250,9 +250,9 @@ static void out_term_push_str(ErlDrvTermData *out, int *index, const char* str)
 
 static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, ErlDrvTermData *out, int *index)
 {
+    out_term_push2(out, index, ERL_DRV_ATOM, dd->term_callback);
     out_term_push2(out, index, ERL_DRV_PORT, dd->term_port);
     // TODO: should be 'resolve_callback'
-    out_term_push2(out, index, ERL_DRV_ATOM, dd->term_resolve);
     if (err == 0) {
         out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
     } else {
@@ -286,8 +286,7 @@ static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, E
     } else {
         out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
     }
-    out_term_push2(out, index, ERL_DRV_TUPLE, 3);
-    out_term_push2(out, index, ERL_DRV_TUPLE, 2);
+    out_term_push2(out, index, ERL_DRV_TUPLE, 4);
 }
 
 static void resolve_callback(void* edd, int err, struct ub_result* result)
