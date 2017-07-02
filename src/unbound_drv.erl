@@ -72,3 +72,54 @@ priv_dir() ->
         {error, bad_name} ->
             filename:join(filename:dirname(code:which(?MODULE)), "../priv")
     end.
+
+-ifdef(TEST).
+
+flush_callbacks(Port) ->
+    receive #ub_callback{port = Port} -> ok
+    after 0 -> ok end.
+
+cancel_valid_test() ->
+    ok = unbound:start(),
+    {ok, Port} = open(),
+    Q = #ub_question{name = <<"tj.id.au.">>, type = 15, class = 1},
+    {ok, Id} = resolve(Port, Q),
+    ok = cancel(Port, Id),
+    ok = close(Port),
+    flush_callbacks(Port).
+
+cancel_invalid_test() ->
+    ok = unbound:start(),
+    {ok, Port} = open(),
+    {error, {_Num, _String}} = cancel(Port, 101),
+    ok = close(Port).
+
+ta_test() ->
+    ok = unbound:start(),
+    {ok, Port1} = open(),
+    {ok, _Id} = resolve(Port1, #ub_question{
+        name = <<"nlnetlabs.nl.">>,
+        type = 1,
+        class = 1
+    }),
+    Result1 = receive #ub_callback{} = R1 -> R1 end,
+    ?assertMatch(#ub_callback{port = Port1,
+                              error = undefined,
+                              result = #ub_result{secure = false}},
+                              Result1),
+    ok = close(Port1),
+    {ok, Port2} = open(),
+    ok = add_ta(Port2, <<". 3096 IN DNSKEY 257 3 8 AwEAAagAIKlVZrpC6Ia7gEzahOR+9W29euxhJhVVLOyQbSEW0O8gcCjF FVQUTf6v58fLjwBd0YI0EzrAcQqBGCzh/RStIoO8g0NfnfL2MTJRkxoX bfDaUeVPQuYEhg37NZWAJQ9VnMVDxP/VHL496M/QZxkjf5/Efucp2gaD X6RS6CXpoY68LsvPVjR0ZSwzz1apAzvN9dlzEheX7ICJBBtuA6G3LQpz W5hOA2hzCTMjJPJ8LbqF6dsV6DoBQzgul0sGIcGOYl7OyQdXfZ57relS Qageu+ipAdTTJ25AsRTAoub8ONGcLmqrAmRLKBP1dfwhYB4N7knNnulq QxA+Uk1ihz0=">>),
+    {ok, _Id} = resolve(Port2, #ub_question{
+        name = <<"nlnetlabs.nl.">>,
+        type = 1,
+        class = 1
+    }),
+    Result2 = receive #ub_callback{} = R2 -> R2 end,
+    ?assertMatch(#ub_callback{port = Port2,
+                              error = undefined,
+                              result = #ub_result{secure = true}},
+                              Result2),
+    ok = close(Port2).
+
+-endif.

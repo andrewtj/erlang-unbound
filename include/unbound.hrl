@@ -1,3 +1,7 @@
+-ifdef(TEST).
+-include_lib("eunit/include/eunit.hrl").
+-endif.
+
 -record(ub_question, {name, type, class}).
 
 -record(ub_result, {
