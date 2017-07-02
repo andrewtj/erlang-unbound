@@ -2,6 +2,7 @@
 -export([do/0]).
 
 -define(DRV_RESOLVE, 1).
+-define(DRV_CANCEL, 2).
 
 -record(resolve, {error, result}).
 -record(question, {name, type, class}).
@@ -26,7 +27,12 @@ do() ->
     Port = erlang:open_port({spawn_driver, "unbound_drv"},[binary]),
     Q = {<<"tj.id.au.">>, 15, 1},
     io:format("Q: ~p~n", [Q]),
-    erlang:port_call(Port, ?DRV_RESOLVE, Q),
+    {ok, Id} = erlang:port_call(Port, ?DRV_RESOLVE, Q),
+    io:format("async_id ~p~n", [Id]),
+    ok = erlang:port_call(Port, ?DRV_CANCEL, Id),
+    io:format("async_id ~p cancelled~n", [Id]),
+    {error, {_,_} = Err} = erlang:port_call(Port, ?DRV_CANCEL, Id+1),
+    io:format("error from cancelling bad async_id: ~p~n", [Err]),
     fl().
 
 fl() -> 

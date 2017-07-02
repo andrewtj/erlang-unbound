@@ -7,6 +7,7 @@
 // Each label-byte is a \ddd escape.
 #define MAX_ASCII_NAME (4 + (63 * 4) + (62 * 4))
 #define UNBOUND_DRV_RESOLVE 1
+#define UNBOUND_DRV_CANCEL 2
 
 typedef struct _unbound_drv_t {
     ErlDrvPort erl_port;
@@ -99,6 +100,43 @@ static void stop(ErlDrvData edd) {
     driver_free(dd);
 }
 
+static ErlDrvSizeT build_call_response(char **rbuf,
+                                       ErlDrvSizeT rlen,
+                                       int err)
+{
+    int out_len = 0;
+    if (err == 0) {
+        ei_encode_version(NULL, &out_len);
+        ei_encode_atom(NULL, &out_len, "ok");
+        if (rlen < out_len) {
+            *rbuf = driver_alloc(out_len);
+        }
+        out_len = 0;
+        ei_encode_version(*rbuf, &out_len);
+        ei_encode_atom(*rbuf, &out_len, "ok");
+    } else {
+        const char *strerr = ub_strerror(err);
+        int strerr_len = strerr ? strlen(strerr) : 0;
+        ei_encode_version(NULL, &out_len);
+        ei_encode_tuple_header(NULL, &out_len, 2);
+        ei_encode_atom(NULL, &out_len, "error");
+        ei_encode_tuple_header(NULL, &out_len, 2);
+        ei_encode_long(NULL, &out_len, err);
+        ei_encode_binary(NULL, &out_len, strerr, strerr_len);
+        if (rlen < out_len) {
+            *rbuf = driver_alloc(out_len);
+        }
+        out_len = 0;
+        ei_encode_version(*rbuf, &out_len);
+        ei_encode_tuple_header(*rbuf, &out_len, 2);
+        ei_encode_atom(*rbuf, &out_len, "error");
+        ei_encode_tuple_header(*rbuf, &out_len, 2);
+        ei_encode_long(*rbuf, &out_len, err);
+        ei_encode_binary(*rbuf, &out_len, strerr, strerr_len);
+    }
+    return out_len;
+}
+
 static ErlDrvSSizeT call(ErlDrvData edd,
                          unsigned int cmd,
                          char *buf,
@@ -154,6 +192,12 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         ei_encode_atom(*rbuf, &rindex, "ok");
         ei_encode_long(*rbuf, &rindex, async_id);
         return out_len;
+    } else if (cmd == UNBOUND_DRV_CANCEL) {
+        if (term.ei_type != ERL_SMALL_INTEGER_EXT) {
+            goto badarg;
+        }
+        int err = ub_cancel(dd->ub_ctx, term.value.i_val);
+        return build_call_response(rbuf, rlen, err);
     }
     badarg:
     return -1;
