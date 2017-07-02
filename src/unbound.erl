@@ -3,9 +3,21 @@
 
 -define(DRV_RESOLVE, 1).
 
--record(question, {name, class, type}).
--record(result, {error, question, response}).
--record(response, {rcode, ttl, nxdomain, secure, bogus, why_bogus, message, answers}).
+-record(resolve, {error, result}).
+-record(question, {name, type, class}).
+-record(result, {
+    question :: #question{},
+    data,
+    canonname,
+    rcode,
+    answer_packet,
+    havedata,
+    nxdomain,
+    secure,
+    bogus,
+    why_bogus,
+    ttl
+}).
 
 do() ->
     _ = application:start(crypto),
@@ -17,18 +29,13 @@ do() ->
     erlang:port_call(Port, ?DRV_RESOLVE, Q),
     fl().
 
-dump(#question{} = Q) ->
-    T = {question, lists:zip(record_info(fields, question), tl(tuple_to_list(Q)))},
-    io:format("~p~n", [T]);
-dump(#response{} = R) ->
-    T = {response, lists:zip(record_info(fields, response), tl(tuple_to_list(R)))},
-    io:format("~p~n", [T]).
 fl() -> 
     receive
-        {Port, #result{error = E, question = Q, response = R}} -> 
-            io:format("result from ~p~nerror: ~p~n", [Port, E]),
-            dump(Q),
-            dump(R);
+        {Port, #resolve{error = E, result = R}} ->
+            io:format("result from ~p~n"
+                      "    error: ~p~n"
+                      " response: ~p~n",
+                      [Port, E, lists:zip(record_info(fields, result), tl(tuple_to_list(R)))]);
         X ->
             io:format("recv: ~p~n", [X])
     end,

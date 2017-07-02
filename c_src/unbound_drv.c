@@ -12,6 +12,9 @@ typedef struct _unbound_drv_t {
     ErlDrvPort erl_port;
     struct ub_ctx *ub_ctx;
     ErlDrvEvent ub_fd;
+    ErlDrvTermData term_ok;
+    ErlDrvTermData term_error;
+    ErlDrvTermData term_undefined;
     ErlDrvTermData term_port;
     ErlDrvTermData term_resolve;
     ErlDrvTermData term_result;
@@ -72,10 +75,14 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
         return ERL_DRV_ERROR_GENERAL;
     }
     ub_ctx_async(dd->ub_ctx, 1);
+    // TODO: ub_fd can return -1
     dd->ub_fd = (ErlDrvEvent)(long)ub_fd(dd->ub_ctx);
     driver_select(dd->erl_port, dd->ub_fd, DO_READ, 1);
     dd->erl_port = port;
     dd->term_port = driver_mk_port(port);
+    dd->term_ok = driver_mk_atom("ok");
+    dd->term_error = driver_mk_atom("error");
+    dd->term_undefined = driver_mk_atom("undefined");
     dd->term_resolve = driver_mk_atom("resolve");
     dd->term_result = driver_mk_atom("result");
     dd->term_question = driver_mk_atom("question");
@@ -158,69 +165,84 @@ static void ready_io(ErlDrvData edd, ErlDrvEvent ev)
     ub_process(dd->ub_ctx);
 }
 
+static void out_term_push(ErlDrvTermData *out, int *index, ErlDrvTermData term)
+{
+    if (out) {
+        out[*index] = term;
+    }
+    (*index)++;
+}
+
+static void out_term_push2(ErlDrvTermData *out, int *index, ErlDrvTermData term1, ErlDrvTermData term2)
+{
+    out_term_push(out, index, term1);
+    out_term_push(out, index, term2);
+}
+
+static void out_term_push3(ErlDrvTermData *out, int *index, ErlDrvTermData term1, ErlDrvTermData term2, ErlDrvTermData term3)
+{
+    out_term_push(out, index, term1);
+    out_term_push(out, index, term2);
+    out_term_push(out, index, term3);
+}
+
+static void out_term_push_str(ErlDrvTermData *out, int *index, const char* str)
+{
+    int len = str ? strlen(str) : 0;
+    out_term_push3(out, index, ERL_DRV_BUF2BINARY, (ErlDrvTermData)str, len);
+}
+
+static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, ErlDrvTermData *out, int *index)
+{
+    out_term_push2(out, index, ERL_DRV_PORT, dd->term_port);
+    // TODO: should be 'resolve_callback'
+    out_term_push2(out, index, ERL_DRV_ATOM, dd->term_resolve);
+    if (err == 0) {
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
+    } else {
+        out_term_push2(out, index, ERL_DRV_INT, err);
+        out_term_push_str(out, index, ub_strerror(err));
+        out_term_push2(out, index, ERL_DRV_TUPLE, 2);
+    }
+    if (result) {
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_result);
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_question);
+        out_term_push_str(out, index, result->qname);
+        out_term_push2(out, index, ERL_DRV_INT, result->qtype);
+        out_term_push2(out, index, ERL_DRV_INT, result->qclass);
+        out_term_push2(out, index, ERL_DRV_TUPLE, 4);
+        int ancount = 0;
+        for (; result->data[ancount]; ancount++) {
+            out_term_push3(out, index, ERL_DRV_BUF2BINARY, (ErlDrvTermData)result->data[ancount], result->len[ancount]);
+        }
+        out_term_push(out, index, ERL_DRV_NIL);
+        out_term_push2(out, index, ERL_DRV_LIST, ancount + 1);
+        out_term_push_str(out, index, result->canonname);
+        out_term_push2(out, index, ERL_DRV_INT, result->rcode);
+        out_term_push3(out, index, ERL_DRV_BUF2BINARY, (ErlDrvTermData)result->answer_packet, result->answer_len);
+        out_term_push2(out, index, ERL_DRV_ATOM, result->havedata ? dd->term_true : dd->term_false);
+        out_term_push2(out, index, ERL_DRV_ATOM, result->nxdomain ? dd->term_true : dd->term_false);
+        out_term_push2(out, index, ERL_DRV_ATOM, result->secure ? dd->term_true : dd->term_false);
+        out_term_push2(out, index, ERL_DRV_ATOM, result->bogus ? dd->term_true : dd->term_false);
+        out_term_push_str(out, index, result->why_bogus);
+        out_term_push2(out, index, ERL_DRV_INT, result->ttl);
+        out_term_push2(out, index, ERL_DRV_TUPLE, 12);
+    } else {
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
+    }
+    out_term_push2(out, index, ERL_DRV_TUPLE, 3);
+    out_term_push2(out, index, ERL_DRV_TUPLE, 2);
+}
+
 static void resolve_callback(void* edd, int err, struct ub_result* result)
 {
-    unbound_drv_t* dd = (unbound_drv_t*) edd;    
-
-    if (!result) {
-        // can't trace it back to a question, so give up.
-        // TODO: send err?
-        return;
-    }
-
-    int ancount = 0;
-    while (result->data[ancount]) { ancount++; }
-    
-    ErlDrvTermData before_an[] = {
-        ERL_DRV_PORT, dd->term_port,
-                ERL_DRV_ATOM, dd->term_result,
-                ERL_DRV_INT, err,
-                    ERL_DRV_ATOM, dd->term_question,
-                    ERL_DRV_BUF2BINARY, (ErlDrvTermData) result->qname, strlen(result->qname),
-                    ERL_DRV_INT, result->qtype,
-                    ERL_DRV_INT, result->qclass,
-                ERL_DRV_TUPLE, 4,
-                    ERL_DRV_ATOM, dd->term_response,
-                    ERL_DRV_INT, result->rcode,
-                    ERL_DRV_INT, result->ttl,
-                    ERL_DRV_ATOM, result->nxdomain ? dd->term_true : dd->term_false,
-                    ERL_DRV_ATOM, result->secure ? dd->term_true : dd->term_false,
-                    ERL_DRV_ATOM, result->bogus ? dd->term_true : dd->term_false,
-                    ERL_DRV_BUF2BINARY, (ErlDrvTermData) result->why_bogus, result->why_bogus ? strlen(result->why_bogus) : 0,
-                    ERL_DRV_BUF2BINARY, (ErlDrvTermData) result->answer_packet, result->answer_len,
-    };
-    ErlDrvTermData after_an[] = {
-                ERL_DRV_TUPLE, 9,
-            ERL_DRV_TUPLE, 4,
-        ERL_DRV_TUPLE, 2
-    };
-
-    int before_an_size = sizeof(before_an);
-    int ansize = ((ancount * 3) + 3) * sizeof(ErlDrvTermData);
-    int after_an_size = sizeof(after_an);
-    
-    ErlDrvTermData *spec = driver_alloc(before_an_size + ansize + after_an_size);
-    int spec_i = 0;
-    for (int max = before_an_size / sizeof(before_an[0]); spec_i < max; spec_i++)
-    {
-        spec[spec_i] = before_an[spec_i];
-    }
-
-    int an_i = 0;
-    while (result->data[an_i]) {
-        spec[spec_i++] = ERL_DRV_BUF2BINARY;
-        spec[spec_i++] = (ErlDrvTermData)result->data[an_i];
-        spec[spec_i++] = result->len[an_i];
-        an_i++;
-    }
-    spec[spec_i++] = ERL_DRV_NIL;
-    spec[spec_i++] = ERL_DRV_LIST;
-    spec[spec_i++] = an_i + 1;
-    for (int i = 0; i < after_an_size/sizeof(after_an[0]); i++) {
-        spec[spec_i++] = after_an[i];
-    }
-    erl_drv_output_term(dd->term_port, spec, spec_i);
-    driver_free(spec);
-
+    unbound_drv_t* dd = (unbound_drv_t*) edd;
+    int index = 0;
+    build_result(dd, err, result, NULL, &index);
+    ErlDrvTermData *out = driver_alloc(index * sizeof(ErlDrvTermData));
+    index = 0;
+    build_result(dd, err, result, out, &index);
+    erl_drv_output_term(dd->term_port, out, index);
+    driver_free(out);
     ub_resolve_free(result);
 }
