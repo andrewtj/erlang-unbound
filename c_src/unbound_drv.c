@@ -8,6 +8,7 @@
 #define MAX_ASCII_NAME (4 + (63 * 4) + (62 * 4))
 #define UNBOUND_DRV_RESOLVE 1
 #define UNBOUND_DRV_CANCEL 2
+#define UNBOUND_DRV_ADD_TA 3
 
 typedef struct _unbound_drv_t {
     ErlDrvPort erl_port;
@@ -197,6 +198,17 @@ static ErlDrvSSizeT call(ErlDrvData edd,
             goto badarg;
         }
         int err = ub_cancel(dd->ub_ctx, term.value.i_val);
+        return build_call_response(rbuf, rlen, err);
+    } else if (cmd == UNBOUND_DRV_ADD_TA) {
+        if (term.ei_type != ERL_BINARY_EXT) {
+            goto badarg;
+        }
+        char *ta = driver_alloc(1 + term.size);
+        long ta_size;
+        ei_decode_binary(buf, &index, ta, &ta_size);
+        ta[ta_size] = 0;
+        int err = ub_ctx_add_ta(dd->ub_ctx, ta);
+        driver_free(ta);
         return build_call_response(rbuf, rlen, err);
     }
     badarg:
