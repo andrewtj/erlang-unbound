@@ -9,6 +9,11 @@
 #define UNBOUND_DRV_RESOLVE 1
 #define UNBOUND_DRV_CANCEL 2
 #define UNBOUND_DRV_ADD_TA 3
+#define UNBOUND_DRV_ADD_TA_AUTR 4
+#define UNBOUND_DRV_ADD_TA_FILE 5
+#define UNBOUND_DRV_HOSTS 6
+#define UNBOUND_DRV_RESOLVCONF 7
+#define UNBOUND_DRV_SET_FWD 8
 
 typedef struct _unbound_drv_t {
     ErlDrvPort erl_port;
@@ -146,18 +151,21 @@ static ErlDrvSSizeT call(ErlDrvData edd,
                          ErlDrvSizeT rlen,
                          unsigned int *flags)
 {
-    int version, index, rindex, out_len, async_id, cl, ty;
+    int err, version, index, rindex, out_len, async_id, cl, ty;
     ei_term term;
     unbound_drv_t* dd = (unbound_drv_t*) edd;
     char name[MAX_ASCII_NAME+1];
     long name_size = 0;
+    char *arg = NULL;
+    long arg_size = 0;
 
     index = 0;
 
     ei_decode_version(buf, &index, &version);
     ei_decode_ei_term(buf, &index, &term);
     
-    if (cmd == UNBOUND_DRV_RESOLVE) {
+    switch (cmd) {
+    case UNBOUND_DRV_RESOLVE:
         if (term.ei_type != ERL_SMALL_TUPLE_EXT || term.arity != 3) {
             goto badarg;
         }
@@ -193,22 +201,49 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         ei_encode_atom(*rbuf, &rindex, "ok");
         ei_encode_long(*rbuf, &rindex, async_id);
         return out_len;
-    } else if (cmd == UNBOUND_DRV_CANCEL) {
+    case UNBOUND_DRV_CANCEL:
         if (term.ei_type != ERL_SMALL_INTEGER_EXT) {
             goto badarg;
         }
-        int err = ub_cancel(dd->ub_ctx, term.value.i_val);
+        err = ub_cancel(dd->ub_ctx, term.value.i_val);
         return build_call_response(rbuf, rlen, err);
-    } else if (cmd == UNBOUND_DRV_ADD_TA) {
+    case UNBOUND_DRV_ADD_TA:
+    case UNBOUND_DRV_ADD_TA_AUTR:
+    case UNBOUND_DRV_ADD_TA_FILE:
+    case UNBOUND_DRV_SET_FWD:
         if (term.ei_type != ERL_BINARY_EXT) {
             goto badarg;
         }
-        char *ta = driver_alloc(1 + term.size);
-        long ta_size;
-        ei_decode_binary(buf, &index, ta, &ta_size);
-        ta[ta_size] = 0;
-        int err = ub_ctx_add_ta(dd->ub_ctx, ta);
-        driver_free(ta);
+        arg = driver_alloc(1 + term.size);
+        ei_decode_binary(buf, &index, arg, &arg_size);
+        arg[arg_size] = 0;
+        if (cmd == UNBOUND_DRV_ADD_TA) {
+            err = ub_ctx_add_ta(dd->ub_ctx, arg);
+        } else if (cmd == UNBOUND_DRV_ADD_TA_AUTR) {
+            err = ub_ctx_add_ta_autr(dd->ub_ctx, arg);
+        } else if (cmd == UNBOUND_DRV_ADD_TA_FILE) {
+            err = ub_ctx_add_ta_file(dd->ub_ctx, arg);
+        } else { // cmd == UNBOUND_DRV_SET_FWD
+            err = ub_ctx_set_fwd(dd->ub_ctx, arg);
+        }
+        driver_free(arg);
+        return build_call_response(rbuf, rlen, err);
+    case UNBOUND_DRV_RESOLVCONF:
+    case UNBOUND_DRV_HOSTS:
+        if (term.ei_type != ERL_BINARY_EXT) {
+            goto badarg;
+        }
+        if (term.size > 0) {
+            arg = driver_alloc(1 + term.size);
+            ei_decode_binary(buf, &index, arg, &arg_size);
+            arg[arg_size] = 0;
+        }
+        if (cmd == UNBOUND_DRV_RESOLVCONF) {
+            err = ub_ctx_resolvconf(dd->ub_ctx, arg);
+        } else { // cmd == UNBOUND_DRV_HOSTS
+            err = ub_ctx_hosts(dd->ub_ctx, arg);
+        }
+        driver_free(arg);
         return build_call_response(rbuf, rlen, err);
     }
     badarg:
