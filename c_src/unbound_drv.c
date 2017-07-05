@@ -15,6 +15,8 @@
 #define UNBOUND_DRV_RESOLVCONF 7
 #define UNBOUND_DRV_SET_FWD 8
 
+typedef struct _request_t request_t;
+
 typedef struct _unbound_drv_t {
     ErlDrvPort erl_port;
     struct ub_ctx *ub_ctx;
@@ -29,7 +31,15 @@ typedef struct _unbound_drv_t {
     ErlDrvTermData term_callback;
     ErlDrvTermData term_true;
     ErlDrvTermData term_false;
+    request_t **requests;
+    ErlDrvSizeT requests_len;
+    ErlDrvSizeT requests_cap;
 } unbound_drv_t;
+
+struct _request_t {
+    int id;
+    unbound_drv_t *dd;
+};
 
 /* Driver Callbacks */
 static ErlDrvData start(ErlDrvPort port, char* cmd);
@@ -96,6 +106,14 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
     dd->term_callback = driver_mk_atom("ub_callback");
     dd->term_true = driver_mk_atom("true");
     dd->term_false = driver_mk_atom("false");
+    dd->requests = driver_alloc(sizeof(request_t));
+    if (!dd->requests) {
+        ub_ctx_delete(dd->ub_ctx);
+        driver_free(dd);
+        return ERL_DRV_ERROR_GENERAL;
+    }
+    dd->requests_len = 0;
+    dd->requests_cap = 1;
     return (ErlDrvData) dd;
 }
 
@@ -186,7 +204,23 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         }
         cl = term.value.i_val;
         // TODO: check return values
-        ub_resolve_async(dd->ub_ctx, name, ty, cl, dd, resolve_callback, &async_id);
+        if (dd->requests_len == dd->requests_cap) {
+            ErlDrvSizeT new_cap = dd->requests_cap * 2;
+            request_t ** new_requests = driver_realloc(dd->requests, new_cap * sizeof(request_t));
+            if (!new_requests) {
+                abort(); // TODO
+            }
+            dd->requests = new_requests;
+            dd->requests_cap = new_cap;
+        }
+        request_t * new_req = driver_alloc(sizeof(request_t));
+        if (!new_req) {
+            abort(); // TODO
+        }
+        new_req->dd = dd;
+        // TODO: check return code
+        ub_resolve_async(dd->ub_ctx, name, ty, cl, new_req, resolve_callback, &new_req->id);
+        dd->requests[dd->requests_len++] = new_req;
         out_len = 0;
         ei_encode_version(NULL, &out_len);
         ei_encode_tuple_header(NULL, &out_len, 2);
@@ -205,7 +239,15 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         if (term.ei_type != ERL_SMALL_INTEGER_EXT) {
             goto badarg;
         }
-        err = ub_cancel(dd->ub_ctx, term.value.i_val);
+        for (int i = 0; i < dd->requests_len; i++) {
+            if (dd->requests[i]->id == term.value.i_val) {
+                request_t *r = dd->requests[i];
+                err = ub_cancel(dd->ub_ctx, r->id);
+                dd->requests[i] = dd->requests[--dd->requests_len];
+                driver_free(r);
+                break;
+            }
+        }
         return build_call_response(rbuf, rlen, err);
     case UNBOUND_DRV_ADD_TA:
     case UNBOUND_DRV_ADD_TA_AUTR:
@@ -287,7 +329,6 @@ static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, E
 {
     out_term_push2(out, index, ERL_DRV_ATOM, dd->term_callback);
     out_term_push2(out, index, ERL_DRV_PORT, dd->term_port);
-    // TODO: should be 'resolve_callback'
     if (err == 0) {
         out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
     } else {
@@ -324,9 +365,10 @@ static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, E
     out_term_push2(out, index, ERL_DRV_TUPLE, 4);
 }
 
-static void resolve_callback(void* edd, int err, struct ub_result* result)
+static void resolve_callback(void* arg, int err, struct ub_result* result)
 {
-    unbound_drv_t* dd = (unbound_drv_t*) edd;
+    request_t* r = (request_t*) arg;
+    unbound_drv_t* dd = r->dd;
     int index = 0;
     build_result(dd, err, result, NULL, &index);
     ErlDrvTermData *out = driver_alloc(index * sizeof(ErlDrvTermData));
@@ -335,4 +377,11 @@ static void resolve_callback(void* edd, int err, struct ub_result* result)
     erl_drv_output_term(dd->term_port, out, index);
     driver_free(out);
     ub_resolve_free(result);
+    for (int i = 0; i < dd->requests_len; i++) {
+        if (dd->requests[i]->id == r->id) {
+            dd->requests[i] = dd->requests[--dd->requests_len];
+            driver_free(r);
+            return;
+        }
+    }
 }
