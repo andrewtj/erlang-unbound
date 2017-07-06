@@ -1,21 +1,29 @@
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--endif.
-
 -record(ub_question, {name, type, class}).
 
 -record(ub_result, {
     question :: #ub_question{},
-    data,
-    canonname,
-    rcode,
-    answer_packet,
-    havedata,
-    nxdomain,
-    secure,
-    bogus,
-    why_bogus,
-    ttl
+    data :: [binary()],
+    canonname :: binary(),
+    rcode :: integer(),
+    answer_packet :: binary(),
+    havedata :: boolean(),
+    nxdomain :: boolean(),
+    secure :: boolean(),
+    bogus :: boolean(),
+    why_bogus :: binary(),
+    ttl :: integer()
 }).
 
--record(ub_callback, {port, error, result :: #ub_result{}}).
+-record(ub_callback, {
+    process :: pid(),
+    ref :: unbound_server:async_ref(),
+    error :: false, %% TODO:
+    result :: #ub_result{} | false
+}).
+
+-record(ub_drv_callback, {
+    port :: port(),
+    id :: integer(),
+    error :: false, %% TODO:
+    result :: #ub_result{} | false
+}).

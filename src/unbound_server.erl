@@ -1,7 +1,9 @@
 -module(unbound_server).
 -behaviour(gen_server).
+-export_type([async_ref/0]).
+-opaque async_ref() :: {integer(), reference()}.
 
--include("unbound.hrl").
+-include("internal.hrl").
 
 %% API.
 -export([start_link/0, start_link/1]).
@@ -110,15 +112,21 @@ handle_info({'DOWN', MRef, process, _Pid, _Reason},
     ),
     State0 = State#state{requests = Reqs1},
     {noreply, State0};
-handle_info(#ub_callback{port = Port,
-                         error = Error,
-                         result = #ub_result{question = Q} = Result},
+handle_info(#ub_drv_callback{port = Port,
+                             id = Id,
+                             error = Error,
+                             result = Result},
             #state{port = Port, requests = Reqs} = State) ->
-    case lists:keytake(Q, #request.q, Reqs) of
-        {value, #request{async_id = Id, clients = Clients}, Reqs0} ->
+    case lists:keytake(Id, #request.async_id, Reqs) of
+        {value, #request{clients = Clients}, Reqs0} ->
             lists:foreach(fun(#client{ref = Ref, pid = Pid}) ->
                 _ = erlang:demonitor(Ref, [flush]),
-                Pid ! {{Id, Ref}, {Error, Result}}
+                Pid ! #ub_callback{
+                    process = self(),
+                    ref = {Id, Ref},
+                    error = Error,
+                    result = Result
+                }
             end, Clients),
             State0 = State#state{requests = Reqs0},
             {noreply, State0};
@@ -128,10 +136,7 @@ handle_info(#ub_callback{port = Port,
 handle_info(_Info, State) ->
     {noreply, State}.
 
-terminate(_Reason, #state{port = Port, requests = Reqs}) ->
-    lists:foreach(fun(#request{async_id = Id}) ->
-        ok = unbound_drv:cancel(Port, Id)
-    end, Reqs),
+terminate(_Reason, #state{port = Port}) ->
     ok = unbound_drv:close(Port).
 
 code_change(_OldVsn, State, _Extra) ->

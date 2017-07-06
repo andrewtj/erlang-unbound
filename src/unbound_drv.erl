@@ -1,5 +1,5 @@
 -module(unbound_drv).
--include("unbound.hrl").
+-include("internal.hrl").
 
 %% API.
 -export([open/0, close/1]).
@@ -104,10 +104,6 @@ priv_dir() ->
 
 -ifdef(TEST).
 
-flush_callbacks(Port) ->
-    receive #ub_callback{port = Port} -> ok
-    after 0 -> ok end.
-
 cancel_valid_test() ->
     ok = unbound:start(),
     {ok, Port} = open(),
@@ -115,7 +111,8 @@ cancel_valid_test() ->
     {ok, Id} = resolve(Port, Q),
     ok = cancel(Port, Id),
     ok = close(Port),
-    flush_callbacks(Port).
+    receive #ub_drv_callback{port = Port} -> ok
+    after 0 -> ok end.
 
 cancel_invalid_test() ->
     ok = unbound:start(),
@@ -123,48 +120,52 @@ cancel_invalid_test() ->
     {error, {_Num, _String}} = cancel(Port, 101),
     ok = close(Port).
 
+receive_callback(Port) ->
+    receive #ub_drv_callback{port = Port} = C -> C
+    after 5000 -> erlang:error(timeout) end.
+
 ta_test() ->
     ok = unbound:start(),
     {ok, Port1} = open(),
-    {ok, _Id} = resolve(Port1, #ub_question{
+    {ok, Id1} = resolve(Port1, #ub_question{
         name = <<"nlnetlabs.nl.">>,
         type = 1,
         class = 1
     }),
-    Result1 = receive #ub_callback{} = R1 -> R1 end,
-    ?assertMatch(#ub_callback{port = Port1,
-                              error = undefined,
-                              result = #ub_result{secure = false}},
-                              Result1),
+    Result1 = receive_callback(Port1),
+    ?assertMatch(#ub_drv_callback{id = Id1,
+                                  error = false,
+                                  result = #ub_result{secure = false}},
+                                  Result1),
     ok = close(Port1),
     {ok, Port2} = open(),
     ok = add_ta(Port2, <<". 3096 IN DNSKEY 257 3 8 AwEAAagAIKlVZrpC6Ia7gEzahOR+9W29euxhJhVVLOyQbSEW0O8gcCjF FVQUTf6v58fLjwBd0YI0EzrAcQqBGCzh/RStIoO8g0NfnfL2MTJRkxoX bfDaUeVPQuYEhg37NZWAJQ9VnMVDxP/VHL496M/QZxkjf5/Efucp2gaD X6RS6CXpoY68LsvPVjR0ZSwzz1apAzvN9dlzEheX7ICJBBtuA6G3LQpz W5hOA2hzCTMjJPJ8LbqF6dsV6DoBQzgul0sGIcGOYl7OyQdXfZ57relS Qageu+ipAdTTJ25AsRTAoub8ONGcLmqrAmRLKBP1dfwhYB4N7knNnulq QxA+Uk1ihz0=">>),
-    {ok, _Id} = resolve(Port2, #ub_question{
+    {ok, Id} = resolve(Port2, #ub_question{
         name = <<"nlnetlabs.nl.">>,
         type = 1,
         class = 1
     }),
-    Result2 = receive #ub_callback{} = R2 -> R2 end,
-    ?assertMatch(#ub_callback{port = Port2,
-                              error = undefined,
-                              result = #ub_result{secure = true}},
-                              Result2),
+    Result2 = receive_callback(Port2),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{secure = true}},
+                                  Result2),
     ok = close(Port2).
 
 ta_file_test() ->
     {ok, Port} = open(),
     RootKey = iolist_to_binary(filename:join(priv_dir(), "root.key")),
     ok = add_ta_file(Port, RootKey),
-    {ok, _Id} = resolve(Port, #ub_question{
+    {ok, Id} = resolve(Port, #ub_question{
         name = <<"nlnetlabs.nl.">>,
         type = 1,
         class = 1
     }),
-    Result = receive #ub_callback{} = R -> R end,
-    ?assertMatch(#ub_callback{port = Port,
-                              error = undefined,
-                              result = #ub_result{secure = true}},
-                              Result),
+    Result = receive_callback(Port),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{secure = true}},
+                                  Result),
     ok = close(Port).
 
 ta_autr_test() ->
@@ -173,16 +174,16 @@ ta_autr_test() ->
     TempKey = iolist_to_binary(filename:join(priv_dir(), "root.key.eunit")),
     {ok, _} = file:copy(RootKey, TempKey),
     ok = add_ta_autr(Port, TempKey),
-    {ok, _Id} = resolve(Port, #ub_question{
+    {ok, Id} = resolve(Port, #ub_question{
         name = <<"nlnetlabs.nl.">>,
         type = 1,
         class = 1
     }),
-    Result = receive #ub_callback{} = R -> R end,
-    ?assertMatch(#ub_callback{port = Port,
-                              error = undefined,
-                              result = #ub_result{secure = true}},
-                              Result),
+    Result = receive_callback(Port),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{secure = true}},
+                                  Result),
     ok = close(Port),
     ok = file:delete(TempKey).
 
@@ -196,16 +197,16 @@ set_fwd_test([]) -> ok;
 set_fwd_test([{Addr, Nx}|Rest]) ->
     {ok, Port} = open(),
     ok = set_fwd(Port, list_to_binary(Addr)),
-    {ok, _Id} = resolve(Port, #ub_question{
+    {ok, Id} = resolve(Port, #ub_question{
         name = <<"debug.opendns.com.">>,
         type = 16,
         class = 1
     }),
-    Result = receive #ub_callback{} = R -> R end,
-    ?assertMatch(#ub_callback{port = Port,
-                              error = undefined,
-                              result = #ub_result{nxdomain = Nx}},
-                              Result),
+    Result = receive_callback(Port),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{nxdomain = Nx}},
+                                  Result),
     ok = close(Port),
     set_fwd_test(Rest).
 
@@ -214,16 +215,16 @@ hosts_test() ->
     ok = file:write_file(HostsFile, <<"1.1.1.1 not-a-real-name-yet.">>),
     {ok, Port} = open(),
     ok = hosts(Port, HostsFile),
-    {ok, _Id} = resolve(Port, #ub_question{
+    {ok, Id} = resolve(Port, #ub_question{
         name = <<"not-a-real-name-yet.">>,
         type = 1,
         class = 1
     }),
-    Result = receive #ub_callback{} = R -> R end,
-    ?assertMatch(#ub_callback{port = Port,
-                              error = undefined,
-                              result = #ub_result{data = [<<1,1,1,1>>]}},
-                              Result),
+    Result = receive_callback(Port),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{data = [<<1,1,1,1>>]}},
+                                  Result),
     ok = close(Port),
     ok = file:delete(HostsFile).
 
@@ -240,16 +241,16 @@ resolvconf_test(ResolvConf, [{Addr, Nx}|Rest]) ->
     ok = file:write_file(ResolvConf, "nameserver " ++ Addr),
     {ok, Port} = open(),
     ok = resolvconf(Port, ResolvConf),
-    {ok, _Id} = resolve(Port, #ub_question{
+    {ok, Id} = resolve(Port, #ub_question{
         name = <<"debug.opendns.com.">>,
         type = 16,
         class = 1
     }),
-    Result = receive #ub_callback{} = R -> R end,
-    ?assertMatch(#ub_callback{port = Port,
-                              error = undefined,
-                              result = #ub_result{nxdomain = Nx}},
-                              Result),
+    Result = receive_callback(Port),
+    ?assertMatch(#ub_drv_callback{id = Id,
+                                  error = false,
+                                  result = #ub_result{nxdomain = Nx}},
+                                  Result),
     ok = close(Port),
     resolvconf_test(ResolvConf, Rest).
 

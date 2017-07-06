@@ -2,7 +2,7 @@
 -export([start/0]).
 -export([resolve/3, cancel/1]).
 
--include("unbound.hrl").
+-include("internal.hrl").
 
 start() -> start([crypto, unbound]).
 

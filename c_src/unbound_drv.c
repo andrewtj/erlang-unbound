@@ -23,7 +23,6 @@ typedef struct _unbound_drv_t {
     ErlDrvEvent ub_fd;
     ErlDrvTermData term_ok;
     ErlDrvTermData term_error;
-    ErlDrvTermData term_undefined;
     ErlDrvTermData term_port;
     ErlDrvTermData term_resolve;
     ErlDrvTermData term_result;
@@ -99,11 +98,10 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
     dd->term_port = driver_mk_port(port);
     dd->term_ok = driver_mk_atom("ok");
     dd->term_error = driver_mk_atom("error");
-    dd->term_undefined = driver_mk_atom("undefined");
     dd->term_resolve = driver_mk_atom("resolve");
     dd->term_result = driver_mk_atom("ub_result");
     dd->term_question = driver_mk_atom("ub_question");
-    dd->term_callback = driver_mk_atom("ub_callback");
+    dd->term_callback = driver_mk_atom("ub_drv_callback");
     dd->term_true = driver_mk_atom("true");
     dd->term_false = driver_mk_atom("false");
     dd->requests = driver_alloc(sizeof(request_t));
@@ -120,7 +118,13 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
 static void stop(ErlDrvData edd) {
     unbound_drv_t* dd = (unbound_drv_t*) edd;
     driver_select(dd->erl_port, dd->ub_fd, DO_READ, 0);
+    for (int i = 0; i < dd->requests_len; i++) {
+        request_t *r = dd->requests[i];
+        ub_cancel(dd->ub_ctx, r->id);
+        driver_free(r);
+    }
     ub_ctx_delete(dd->ub_ctx);
+    driver_free(dd->requests);
     driver_free(dd);
 }
 
@@ -169,7 +173,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
                          ErlDrvSizeT rlen,
                          unsigned int *flags)
 {
-    int err, version, index, rindex, out_len, async_id, cl, ty;
+    int err, version, index, rindex, out_len, cl, ty;
     ei_term term;
     unbound_drv_t* dd = (unbound_drv_t*) edd;
     char name[MAX_ASCII_NAME+1];
@@ -225,7 +229,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         ei_encode_version(NULL, &out_len);
         ei_encode_tuple_header(NULL, &out_len, 2);
         ei_encode_atom(NULL, &out_len, "ok");
-        ei_encode_long(NULL, &out_len, async_id);
+        ei_encode_long(NULL, &out_len, new_req->id);
         if(rlen < out_len) {
             *rbuf = driver_alloc(out_len);
         }
@@ -233,7 +237,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         ei_encode_version(*rbuf, &rindex);
         ei_encode_tuple_header(*rbuf, &rindex, 2);
         ei_encode_atom(*rbuf, &rindex, "ok");
-        ei_encode_long(*rbuf, &rindex, async_id);
+        ei_encode_long(*rbuf, &rindex, new_req->id);
         return out_len;
     case UNBOUND_DRV_CANCEL:
         if (term.ei_type != ERL_SMALL_INTEGER_EXT) {
@@ -245,7 +249,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
                 err = ub_cancel(dd->ub_ctx, r->id);
                 dd->requests[i] = dd->requests[--dd->requests_len];
                 driver_free(r);
-                break;
+                return build_call_response(rbuf, rlen, err);
             }
         }
         return build_call_response(rbuf, rlen, err);
@@ -325,12 +329,13 @@ static void out_term_push_str(ErlDrvTermData *out, int *index, const char* str)
     out_term_push3(out, index, ERL_DRV_BUF2BINARY, (ErlDrvTermData)str, len);
 }
 
-static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, ErlDrvTermData *out, int *index)
+static void build_result(unbound_drv_t *dd, int id, int err, struct ub_result* result, ErlDrvTermData *out, int *index)
 {
     out_term_push2(out, index, ERL_DRV_ATOM, dd->term_callback);
     out_term_push2(out, index, ERL_DRV_PORT, dd->term_port);
+    out_term_push2(out, index, ERL_DRV_INT, id);
     if (err == 0) {
-        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_false);
     } else {
         out_term_push2(out, index, ERL_DRV_INT, err);
         out_term_push_str(out, index, ub_strerror(err));
@@ -360,9 +365,9 @@ static void build_result(unbound_drv_t *dd, int err, struct ub_result* result, E
         out_term_push2(out, index, ERL_DRV_INT, result->ttl);
         out_term_push2(out, index, ERL_DRV_TUPLE, 12);
     } else {
-        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_undefined);
+        out_term_push2(out, index, ERL_DRV_ATOM, dd->term_false);
     }
-    out_term_push2(out, index, ERL_DRV_TUPLE, 4);
+    out_term_push2(out, index, ERL_DRV_TUPLE, 5);
 }
 
 static void resolve_callback(void* arg, int err, struct ub_result* result)
@@ -370,10 +375,10 @@ static void resolve_callback(void* arg, int err, struct ub_result* result)
     request_t* r = (request_t*) arg;
     unbound_drv_t* dd = r->dd;
     int index = 0;
-    build_result(dd, err, result, NULL, &index);
+    build_result(dd, r->id, err, result, NULL, &index);
     ErlDrvTermData *out = driver_alloc(index * sizeof(ErlDrvTermData));
     index = 0;
-    build_result(dd, err, result, out, &index);
+    build_result(dd, r->id, err, result, out, &index);
     erl_drv_output_term(dd->term_port, out, index);
     driver_free(out);
     ub_resolve_free(result);
