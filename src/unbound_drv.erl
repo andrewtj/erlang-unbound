@@ -117,7 +117,7 @@ cancel_valid_test() ->
 cancel_invalid_test() ->
     ok = unbound:start(),
     {ok, Port} = open(),
-    {error, {_Num, _String}} = cancel(Port, 101),
+    ok = cancel(Port, 101),
     ok = close(Port).
 
 receive_callback(Port) ->

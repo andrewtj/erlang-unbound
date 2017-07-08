@@ -7,7 +7,7 @@
 
 %% API.
 -export([start_link/0, start_link/1]).
--export([resolve/2, cancel/2]).
+-export([resolve/2, cancel/2, cancel_noflush/2]).
 
 %% gen_server.
 -export([init/1]).
@@ -41,6 +41,11 @@ resolve(Pid, #ub_question{} = Q) when is_pid(Pid) orelse Pid =:= unbound ->
     gen_server:call(Pid, {resolve, Q}).
 
 cancel(Pid, Ref) when is_pid(Pid) orelse Pid =:= unbound ->
+    Result = cancel_noflush(Pid, Ref),
+    receive #ub_callback{ref = Ref} -> Result
+    after 0 -> Result end.
+
+cancel_noflush(Pid, Ref) when is_pid(Pid) orelse Pid =:= unbound ->
     gen_server:call(Pid, {cancel, Ref}).
 
 %% gen_server.

@@ -17,13 +17,13 @@
 -record(ub_callback, {
     process :: pid(),
     ref :: unbound_server:async_ref(),
-    error :: false, %% TODO:
+    error :: false | {error, nomem} | {error, {ub, integer(), binary()}},
     result :: #ub_result{} | false
 }).
 
 -record(ub_drv_callback, {
     port :: port(),
     id :: integer(),
-    error :: false, %% TODO:
+    error :: false| {error, nomem} | {error, {ub, integer(), binary()}},
     result :: #ub_result{} | false
 }).
