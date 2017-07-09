@@ -150,43 +150,91 @@ static void stop(ErlDrvData edd) {
     driver_free(dd);
 }
 
-static int build_call_response_nomem(char **rbuf, ErlDrvSizeT rlen)
+static int call_response_nomem_encode(char *rbuf)
 {
     int out_len = 0;
-    ei_encode_version(NULL, &out_len);
-    ei_encode_tuple_header(NULL, &out_len, 2);
-    ei_encode_atom(NULL, &out_len, "error");
-    ei_encode_atom(NULL, &out_len, "nomem");
+    ei_encode_version(rbuf, &out_len);
+    ei_encode_tuple_header(rbuf, &out_len, 2);
+    ei_encode_atom(rbuf, &out_len, "error");
+    ei_encode_atom(rbuf, &out_len, "nomem");
+    return out_len;
+}
+
+static int call_response_nomem(char **rbuf, ErlDrvSizeT rlen)
+{
+    int out_len = call_response_nomem_encode(NULL);
     if (rlen < out_len) {
-        *rbuf = driver_alloc(out_len);
+        char *rbuf = driver_alloc(out_len);
         if (!rbuf) {
             return -1;
         }
     }
-    out_len = 0;
-    ei_encode_version(*rbuf, &out_len);
-    ei_encode_tuple_header(*rbuf, &out_len, 2);
-    ei_encode_atom(*rbuf, &out_len, "error");
-    ei_encode_atom(*rbuf, &out_len, "nomem");
-    return out_len;
+    return call_response_nomem_encode(*rbuf);
 }
 
-static void build_call_response(char *rbuf, int *out_len, int err)
+static int call_response_err_encode(char *rbuf, int err)
 {
-    *out_len = 0;
-    ei_encode_version(rbuf, out_len);
+    int out_len = 0;
+    ei_encode_version(rbuf, &out_len);
     if (err == 0) {
-        ei_encode_atom(rbuf, out_len, "ok");
+        ei_encode_atom(rbuf, &out_len, "ok");
     } else {
         const char *strerr = ub_strerror(err);
         int strerr_len = strerr ? strlen(strerr) : 0;
-        ei_encode_tuple_header(rbuf, out_len, 2);
-        ei_encode_atom(rbuf, out_len, "error");
-        ei_encode_tuple_header(rbuf, out_len, 3);
-        ei_encode_atom(rbuf, out_len, "ub");
-        ei_encode_long(rbuf, out_len, err);
-        ei_encode_binary(rbuf, out_len, strerr, strerr_len);
+        ei_encode_tuple_header(rbuf, &out_len, 2);
+        ei_encode_atom(rbuf, &out_len, "error");
+        ei_encode_tuple_header(rbuf, &out_len, 3);
+        ei_encode_atom(rbuf, &out_len, "ub");
+        ei_encode_long(rbuf, &out_len, err);
+        ei_encode_binary(rbuf, &out_len, strerr, strerr_len);
     }
+    return out_len;
+}
+
+static int call_response_err(char **rbuf, ErlDrvSizeT rlen, int err)
+{
+    int out_len = call_response_err_encode(NULL, err);
+    if (rlen < out_len) {
+        char *new_rbuf = driver_alloc(out_len);
+        if (!new_rbuf) {
+            return call_response_nomem(rbuf, rlen);
+        }
+        *rbuf = new_rbuf;
+    }
+    return call_response_err_encode(*rbuf, err);
+}
+
+static int call_response_okstr_encode(char *rbuf, const char *s)
+{
+    int out_len = 0;
+    ei_encode_version(rbuf, &out_len);
+    ei_encode_tuple_header(rbuf, &out_len, 2);
+    ei_encode_atom(rbuf, &out_len, "ok");
+    ei_encode_binary(rbuf, &out_len, s, s ? strlen(s) : 0);
+    return out_len;
+}
+
+static int call_response_okstr(char **rbuf, ErlDrvSizeT rlen, const char *s)
+{
+    int out_len = call_response_okstr_encode(NULL, s);
+    if (rlen < out_len) {
+        char *new_rbuf = driver_alloc(out_len);
+        if (!new_rbuf) {
+            return call_response_nomem(rbuf, rlen);
+        }
+        *rbuf = new_rbuf;
+    }
+    return call_response_okstr_encode(*rbuf, s);
+}
+
+static int call_response_okint_encode(char *rbuf, int n)
+{
+    int out_len = 0;
+    ei_encode_version(rbuf, &out_len);
+    ei_encode_tuple_header(rbuf, &out_len, 2);
+    ei_encode_atom(rbuf, &out_len, "ok");
+    ei_encode_long(rbuf, &out_len, n);
+    return out_len;
 }
 
 static ErlDrvSSizeT call(ErlDrvData edd,
@@ -197,7 +245,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
                          ErlDrvSizeT rlen,
                          unsigned int *flags)
 {
-    int err = 0, version, index = 0, out_len, cl, ty;
+    int err = 0, version, index = 0, cl, ty;
     ei_term term;
     unbound_drv_t* dd = (unbound_drv_t*) edd;
     char name[MAX_ASCII_NAME+1];
@@ -233,36 +281,39 @@ static ErlDrvSSizeT call(ErlDrvData edd,
             ErlDrvSizeT new_cap = dd->requests_cap * 2;
             request_t ** new_requests = driver_realloc(dd->requests, new_cap * sizeof(request_t));
             if (!new_requests) {
-                return build_call_response_nomem(rbuf, rlen);
+                return call_response_nomem(rbuf, rlen);
             }
             dd->requests = new_requests;
             dd->requests_cap = new_cap;
         }
         request_t * new_req = driver_alloc(sizeof(request_t));
         if (!new_req) {
-            return build_call_response_nomem(rbuf, rlen);
+            return call_response_nomem(rbuf, rlen);
         }
         new_req->dd = dd;
-        ub_resolve_async(dd->ub_ctx, name, ty, cl, new_req, resolve_callback, &new_req->id);
-        dd->requests[dd->requests_len++] = new_req;
-        out_len = 0;
-        ei_encode_version(NULL, &out_len);
-        ei_encode_tuple_header(NULL, &out_len, 2);
-        ei_encode_atom(NULL, &out_len, "ok");
-        ei_encode_long(NULL, &out_len, new_req->id);
-        if(rlen < out_len) {
-            char *new_rbuf = driver_alloc(out_len);
+        int success_len = call_response_okint_encode(NULL, !0);
+        if (success_len < rlen) {
+            char *new_rbuf = driver_alloc(success_len);
             if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
+                return call_response_nomem(rbuf, rlen);
             }
-            *rbuf = new_rbuf;
+            err = ub_resolve_async(dd->ub_ctx, name, ty, cl, new_req, resolve_callback, &new_req->id);
+            if (err == 0) {
+                dd->requests[dd->requests_len++] = new_req;
+                *rbuf = new_rbuf;
+                return call_response_okint_encode(*rbuf, new_req->id);
+            }
+            driver_free(new_rbuf);
+            driver_free(new_req);
+            return call_response_err(rbuf, rlen, err);
         }
-        out_len = 0;
-        ei_encode_version(*rbuf, &out_len);
-        ei_encode_tuple_header(*rbuf, &out_len, 2);
-        ei_encode_atom(*rbuf, &out_len, "ok");
-        ei_encode_long(*rbuf, &out_len, new_req->id);
-        return out_len;
+        err = ub_resolve_async(dd->ub_ctx, name, ty, cl, new_req, resolve_callback, &new_req->id);
+        if (err == 0) {
+            dd->requests[dd->requests_len++] = new_req;
+            return call_response_okint_encode(*rbuf, new_req->id);
+        }
+        driver_free(new_req);
+        return call_response_err(rbuf, rlen, err);
     case UNBOUND_DRV_CANCEL:
         if (term.ei_type != ERL_SMALL_INTEGER_EXT) {
             return -1;
@@ -277,16 +328,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
             }
         }
         cancel_respond:
-        build_call_response(NULL, &out_len, err);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
-        }
-        build_call_response(*rbuf, &out_len, err);
-        return out_len;
+        return call_response_err(rbuf, rlen, err);
     case UNBOUND_DRV_ADD_TA:
     case UNBOUND_DRV_ADD_TA_AUTR:
     case UNBOUND_DRV_ADD_TA_FILE:
@@ -296,7 +338,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         }
         arg = driver_alloc(1 + term.size);
         if (!arg) {
-            return build_call_response_nomem(rbuf, rlen);
+            return call_response_nomem(rbuf, rlen);
         }
         ei_decode_binary(buf, &index, arg, &arg_size);
         arg[arg_size] = 0;
@@ -312,16 +354,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         if (arg) {
             driver_free(arg);
         }
-        build_call_response(NULL, &out_len, err);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
-        }
-        build_call_response(*rbuf, &out_len, err);
-        return out_len;
+        return call_response_err(rbuf, rlen, err);
     case UNBOUND_DRV_RESOLVCONF:
     case UNBOUND_DRV_HOSTS:
         if (term.ei_type != ERL_BINARY_EXT) {
@@ -330,7 +363,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         if (term.size > 0) {
             arg = driver_alloc(1 + term.size);
             if (!arg) {
-                return build_call_response_nomem(rbuf, rlen);
+                return call_response_nomem(rbuf, rlen);
             }
             ei_decode_binary(buf, &index, arg, &arg_size);
             arg[arg_size] = 0;
@@ -341,23 +374,14 @@ static ErlDrvSSizeT call(ErlDrvData edd,
             err = ub_ctx_hosts(dd->ub_ctx, arg);
         }
         driver_free(arg);
-        build_call_response(NULL, &out_len, err);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
-        }
-        build_call_response(*rbuf, &out_len, err);
-        return out_len;
+        return call_response_err(rbuf, rlen, err);
     case UNBOUND_DRV_GET_OPT:
         if (term.ei_type != ERL_BINARY_EXT) {
             return -1;
         }
         arg = driver_alloc(1 + term.size);
         if (!arg) {
-            return build_call_response_nomem(rbuf, rlen);
+            return call_response_nomem(rbuf, rlen);
         }
         ei_decode_binary(buf, &index, arg, &arg_size);
         arg[arg_size] = 0;
@@ -365,37 +389,12 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         err = ub_ctx_get_option(dd->ub_ctx, arg, &val);
         if (err != 0) {
             driver_free(arg);
-            build_call_response(NULL, &out_len, err);
-            if (rlen < out_len) {
-                char * new_rbuf = driver_alloc(out_len);
-                if (!new_rbuf) {
-                    return build_call_response_nomem(rbuf, rlen);
-                }
-                *rbuf = new_rbuf;
-            }
-            build_call_response(*rbuf, &out_len, err);
-            return out_len;
+            return call_response_err(rbuf, rlen, err);
         }
-        out_len = 0;
-        ei_encode_version(NULL, &out_len);
-        ei_encode_tuple_header(NULL, &out_len, 2);
-        ei_encode_atom(NULL, &out_len, "ok");
-        ei_encode_binary(NULL, &out_len, val, val ? strlen(val) : 0);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                if (val) {
-                    free(val);
-                }
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
+        int out_len = call_response_okstr(rbuf, rlen, val);
+        if (val) {
+            free(val);
         }
-        out_len = 0;
-        ei_encode_version(*rbuf, &out_len);
-        ei_encode_tuple_header(*rbuf, &out_len, 2);
-        ei_encode_atom(*rbuf, &out_len, "ok");
-        ei_encode_binary(*rbuf, &out_len, val, val ? strlen(val) : 0);
         return out_len;
     case UNBOUND_DRV_SET_OPT:
         if (term.ei_type != ERL_SMALL_TUPLE_EXT || term.arity != 2) {
@@ -407,7 +406,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         }
         arg = driver_alloc(1 + term.size);
         if (!arg) {
-            return build_call_response_nomem(rbuf, rlen);
+            return call_response_nomem(rbuf, rlen);
         }
         ei_decode_binary(buf, &index, arg, &arg_size);
         arg[arg_size] = 0;
@@ -419,39 +418,16 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         char * value = driver_alloc(1 + term.size);
         if (!arg) {
             driver_free(arg);
-            return build_call_response_nomem(rbuf, rlen);
+            return call_response_nomem(rbuf, rlen);
         }
         ei_decode_binary(buf, &index, value, &arg_size);
         value[arg_size] = 0;
         err = ub_ctx_set_option(dd->ub_ctx, arg, value);
         driver_free(arg);
         driver_free(value);
-        build_call_response(NULL, &out_len, err);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
-        }
-        build_call_response(*rbuf, &out_len, err);
-        return out_len;
+        return call_response_err(rbuf, rlen, err);
     case UNBOUND_DRV_VERSION:
-        out_len = 0;
-        const char * ver = ub_version();
-        ei_encode_version(NULL, &out_len);
-        ei_encode_binary(NULL, &out_len, ver, ver ? strlen(ver) : 0);
-        if (rlen < out_len) {
-            char * new_rbuf = driver_alloc(out_len);
-            if (!new_rbuf) {
-                return build_call_response_nomem(rbuf, rlen);
-            }
-            *rbuf = new_rbuf;
-        }
-        out_len = 0;
-        ei_encode_version(*rbuf, &out_len);
-        ei_encode_binary(*rbuf, &out_len, ver, ver ? strlen(ver) : 0);
-        return out_len;
+        return call_response_okstr(rbuf, rlen, ub_version());
     }
     return -1;
 }

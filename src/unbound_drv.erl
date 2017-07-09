@@ -283,7 +283,8 @@ opt_test() ->
 
 version_test() ->
     {ok, Port} = open(),
-    true = is_binary(version(Port)),
+    {ok, Ver} = version(Port),
+    true = is_binary(Ver),
     ok = close(Port).
 
 -endif.
