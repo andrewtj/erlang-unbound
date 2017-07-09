@@ -31,17 +31,17 @@
 load() ->
     {ok, Drivers} = erl_ddll:loaded_drivers(),
     case lists:member(?DRIVER_NAME, Drivers) of
-    true -> ok;
-    false ->
-        case erl_ddll:load(priv_dir(), ?DRIVER_NAME) of
-        ok -> ok;
-        {error, Error} ->
-            error_logger:error_msg(
-              ?MODULE_STRING ": Error loading ~p: ~p~n",
-              [?DRIVER_NAME, erl_ddll:format_error(Error)]
-             ),
-            {error, Error}
-        end
+        true -> ok;
+        false ->
+            case erl_ddll:load(priv_dir(), ?DRIVER_NAME) of
+            ok -> ok;
+            {error, Error} ->
+                error_logger:error_msg(
+                  ?MODULE_STRING ": Error loading ~p: ~p~n",
+                  [?DRIVER_NAME, erl_ddll:format_error(Error)]
+                 ),
+                {error, Error}
+            end
     end.
 
 unload() ->
