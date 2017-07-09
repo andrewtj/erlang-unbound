@@ -9,6 +9,8 @@
 -export([hosts/1, hosts/2]).
 -export([resolvconf/1, resolvconf/2]).
 -export([set_fwd/2]).
+-export([get_option/2, set_option/3]).
+-export([version/1]).
 
 -define(DRIVER_NAME, ?MODULE_STRING).
 
@@ -20,6 +22,9 @@
 -define(DRV_HOSTS, 6).
 -define(DRV_RESOLVCONF, 7).
 -define(DRV_SET_FWD, 8).
+-define(DRV_GET_OPT, 9).
+-define(DRV_SET_OPT, 10).
+-define(DRV_VERSION, 11).
 
 %% API.
 
@@ -92,6 +97,17 @@ resolvconf(Port, File) when is_port(Port) andalso is_binary(File) ->
 
 set_fwd(Port, Addr) when is_port(Port) andalso is_binary(Addr) ->
     erlang:port_call(Port, ?DRV_SET_FWD, Addr).
+
+get_option(Port, Key) when is_port(Port) andalso is_binary(Key) ->
+    erlang:port_call(Port, ?DRV_GET_OPT, Key).
+
+set_option(Port, Key, Value) when is_port(Port) andalso
+                                  is_binary(Key) andalso
+                                  is_binary(Value) ->
+    erlang:port_call(Port, ?DRV_SET_OPT, {Key, Value}).
+
+version(Port) ->
+    erlang:port_call(Port, ?DRV_VERSION, nil).
 
 % internal
 
@@ -253,5 +269,21 @@ resolvconf_test(ResolvConf, [{Addr, Nx}|Rest]) ->
                                   Result),
     ok = close(Port),
     resolvconf_test(ResolvConf, Rest).
+
+opt_test() ->
+    {ok, Port} = open(),
+    {ok, Value} = get_option(Port, <<"qname-minimisation">>),
+    NewValue = case Value of
+        <<"yes">> -> <<"no">>;
+        <<"no">> -> <<"yes">>
+    end,
+    ok = set_option(Port, <<"qname-minimisation:">>, NewValue),
+    {ok, NewValue} = get_option(Port, <<"qname-minimisation">>),
+    ok = close(Port).
+
+version_test() ->
+    {ok, Port} = open(),
+    true = is_binary(version(Port)),
+    ok = close(Port).
 
 -endif.
