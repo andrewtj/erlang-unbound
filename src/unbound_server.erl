@@ -8,6 +8,7 @@
 %% API.
 -export([start_link/0, start_link/1]).
 -export([resolve/2, resolve/3, resolve/4, cancel/2, cancel_noflush/2]).
+-export([defaults/0]).
 
 %% gen_server.
 -export([init/1]).
@@ -29,12 +30,13 @@
 
 -spec start_link() -> {ok, pid()}.
 start_link() ->
-    start_link([]).
+    start_link(defaults()).
 
 start_link(Opts) when is_list(Opts) ->
-    case proplists:get_value(register, Opts) of
-        undefined -> gen_server:start_link(?MODULE, [], []);
-        ServerName -> gen_server:start_link(ServerName, ?MODULE, [], [])
+    case lists:keytake(register, 1, Opts) of
+        {value, {register, ServerName}, Opts0} ->
+            gen_server:start_link(ServerName, ?MODULE, Opts0, []);
+        false -> gen_server:start_link(?MODULE, Opts, [])
     end.
 
 resolve(ServerRef, Name, Type) ->
@@ -59,11 +61,69 @@ cancel(ServerRef, AsyncRef) ->
 cancel_noflush(ServerRef, AsyncRef) ->
     gen_server:call(ServerRef, {cancel, AsyncRef}).
 
+defaults() ->
+    Args = application:get_env(unbound, server_defaults, []),
+    true = is_list(Args),
+    false = lists:keymember(register, 1, Args),
+    Args.
+
 %% gen_server.
 
-init([]) ->
+init(Opts) ->
     {ok, Port} = unbound_drv:open(),
-    {ok, #state{port = Port}}.
+    init(Port, Opts).
+
+init(Port, []) ->
+    {ok, #state{port = Port}};
+init(Port, [Opt|Opts]) ->
+    [ ok = apply(unbound_drv, Function, [Port|Args])
+      || {Function, Args} <- init_drv_sig(Opt) ],
+    init(Port, Opts).
+
+init_drv_sig({trust_anchor, auto}) ->
+    init_drv_sig({trust_anchor, {auto, {priv, "root.key"}}});
+init_drv_sig({trust_anchor, maintain}) ->
+    init_drv_sig({trust_anchor, {maintain, {priv, "root.key"}}});
+init_drv_sig({trust_anchor, read}) ->
+    init_drv_sig({trust_anchor, {maintain, {priv, "root.key"}}});
+init_drv_sig({trust_anchor, {auto, Path}}) ->
+    case whereis(unbound) =:= self() of
+        true -> init_drv_sig({trust_anchor, {maintain, Path}});
+        false -> init_drv_sig({trust_anchor, {read, Path}})
+    end;
+init_drv_sig({trust_anchor, {maintain, Path}}) ->
+    [{add_ta_autr, [init_drv_sig_path(Path)]}];
+init_drv_sig({trust_anchor, {read, Path}}) ->
+    [{add_ta_file, [init_drv_sig_path(Path)]}];
+init_drv_sig({trust_anchor, Data}) ->
+    [{add_ta, [(Data)]}];
+init_drv_sig(hosts) ->
+    [{hosts, []}];
+init_drv_sig({hosts, Path}) ->
+    [{hosts, [init_drv_sig_path(Path)]}];
+init_drv_sig(resolvconf) ->
+    [{resolv_conf, []}];
+init_drv_sig({resolvconf, Path}) ->
+    [{resolv_conf, init_drv_sig_path(Path)}];
+init_drv_sig({forwarders, Addrs})
+    when is_list(Addrs)
+          andalso not is_integer(hd(Addrs)) ->
+    [{set_fwd, case is_tuple(Addr) of
+        true -> iolist_to_binary(inet:ntoa(Addr));
+        false -> iolist_to_binary(Addr)
+      end} || Addr <- Addrs ];
+init_drv_sig({forwarders, Addr}) ->
+    init_drv_sig({forwarders, [Addr]}).
+
+init_drv_sig_path({priv, Path}) ->
+    PrivDir = case code:priv_dir(unbound) of
+        List when is_list(List) -> List;
+        {error, bad_name} ->
+            filename:join(filename:dirname(code:which(?MODULE)), "../priv")
+    end,
+    iolist_to_binary(filename:join(PrivDir, Path));
+init_drv_sig_path(Path) ->
+    iolist_to_binary(Path).
 
 handle_call({resolve, #ub_question{} = Q}, {Pid, _},
             #state{port = Port, requests = Reqs} = State) ->
