@@ -1,3 +1,6 @@
+-ifndef(UNBOUND_UNBOUND_HRL).
+-define(UNBOUND_UNBOUND_HRL, true).
+
 -record(ub_question, {name, type, class}).
 
 -record(ub_result, {
@@ -27,3 +30,5 @@
     error :: false| {error, nomem} | {error, {ub, integer(), binary()}},
     result :: #ub_result{} | false
 }).
+
+-endif.

@@ -3,3 +3,4 @@
 -endif.
 
 -include("unbound.hrl").
+-include("params.hrl").
