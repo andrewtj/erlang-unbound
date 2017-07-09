@@ -7,7 +7,7 @@
 
 %% API.
 -export([start_link/0, start_link/1]).
--export([resolve/2, cancel/2, cancel_noflush/2]).
+-export([resolve/2, resolve/3, resolve/4, cancel/2, cancel_noflush/2]).
 
 %% gen_server.
 -export([init/1]).
@@ -37,16 +37,27 @@ start_link(Opts) when is_list(Opts) ->
         ServerName -> gen_server:start_link(ServerName, ?MODULE, [], [])
     end.
 
-resolve(Pid, #ub_question{} = Q) when is_pid(Pid) orelse Pid =:= unbound ->
-    gen_server:call(Pid, {resolve, Q}).
+resolve(ServerRef, Name, Type) ->
+    resolve(ServerRef, Name, Type, ?UB_CL_IN).
 
-cancel(Pid, Ref) when is_pid(Pid) orelse Pid =:= unbound ->
-    Result = cancel_noflush(Pid, Ref),
-    receive #ub_callback{ref = Ref} -> Result
+resolve(ServerRef, Name, Type, Class) ->
+    resolve(ServerRef, #ub_question{name = Name, type = Type, class = Class}).
+
+resolve(ServerRef, #ub_question{name = N} = Q) when is_list(N) ->
+    resolve(ServerRef, Q#ub_question{name = iolist_to_binary(N)});
+resolve(ServerRef, #ub_question{name = N, type = T, class = C} = Q)
+    when is_binary(N) andalso
+         is_integer(T), T > 0, T < 65535 andalso
+         is_integer(C), C > 0, C < 65535 ->
+    gen_server:call(ServerRef, {resolve, Q}).
+
+cancel(ServerRef, AsyncRef) ->
+    Result = cancel_noflush(ServerRef, AsyncRef),
+    receive #ub_callback{ref = AsyncRef} -> Result
     after 0 -> Result end.
 
-cancel_noflush(Pid, Ref) when is_pid(Pid) orelse Pid =:= unbound ->
-    gen_server:call(Pid, {cancel, Ref}).
+cancel_noflush(ServerRef, AsyncRef) ->
+    gen_server:call(ServerRef, {cancel, AsyncRef}).
 
 %% gen_server.
 
