@@ -21,7 +21,7 @@ resolve(Name, Type) ->
     resolve(Name, Type, ?UB_CL_IN).
 
 resolve(Name, Type, Class) ->
-    resolve(#ub_question{name = Name, type = Type, class = Class}).
+    unbound_server:resolve(unbound, Name, Type, Class).
 
 resolve(#ub_question{} = Q) ->
     unbound_server:resolve(unbound, Q).

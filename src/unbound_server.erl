@@ -42,11 +42,11 @@ start_link(Opts) when is_list(Opts) ->
 resolve(ServerRef, Name, Type) ->
     resolve(ServerRef, Name, Type, ?UB_CL_IN).
 
+resolve(ServerRef, Name, Type, Class) when is_list(Name) ->
+    resolve(ServerRef, iolist_to_binary(Name), Type, Class);
 resolve(ServerRef, Name, Type, Class) ->
     resolve(ServerRef, #ub_question{name = Name, type = Type, class = Class}).
 
-resolve(ServerRef, #ub_question{name = N} = Q) when is_list(N) ->
-    resolve(ServerRef, Q#ub_question{name = iolist_to_binary(N)});
 resolve(ServerRef, #ub_question{name = N, type = T, class = C} = Q)
     when is_binary(N) andalso
          is_integer(T), T > 0, T < 65535 andalso
