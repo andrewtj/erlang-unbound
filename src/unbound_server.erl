@@ -109,7 +109,13 @@ init_drv_sig(_IsMain, {forwarders, Addrs})
           andalso not is_integer(hd(Addrs)) ->
     [{set_fwd, [init_drv_addr(Addr)]} || Addr <- Addrs ];
 init_drv_sig(_IsMain, {forwarders, Addr}) ->
-    [{set_fwd, [init_drv_addr(Addr)]}].
+    [{set_fwd, [init_drv_addr(Addr)]}];
+init_drv_sig(IsMain, {K, V}) when is_list(K) andalso is_integer(hd(K)) ->
+    init_drv_sig(IsMain, {iolist_to_binary(K), V});
+init_drv_sig(IsMain, {K, V}) when is_list(V) andalso is_integer(hd(V)) ->
+    init_drv_sig(IsMain, {K, iolist_to_binary(V)});
+init_drv_sig(_IsMain, {K, V}) when is_binary(K) andalso is_binary(V) ->
+    [{set_option, [K, V]}].
 
 init_drv_sig_path({priv, Path}) ->
     iolist_to_binary(filename:join(unbound:priv_dir(), Path));
@@ -217,6 +223,17 @@ code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
 
 -ifdef(TEST).
+
+opt_set_option_test() ->
+    Cases = [{{"k", "v"}, [<<"k">>, <<"v">>]},
+             {{<<"k">>, <<"v">>}, [<<"k">>, <<"v">>]}],
+    opt_set_option_test(Cases).
+
+opt_set_option_test([]) -> ok;
+opt_set_option_test([{In, Out}|Cases]) ->
+    Expect = [{set_option, Out}],
+    Expect = init_drv_sig(false, In),
+    opt_set_option_test(Cases).
 
 opt_register_test() ->
     Cases = [{local, name}, {global, name}, {via, mod, name}],
