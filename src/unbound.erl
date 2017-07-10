@@ -1,6 +1,7 @@
 -module(unbound).
 -export([start/0, stop/0]).
 -export([resolve/1, resolve/2, resolve/3, cancel/1]).
+-export([priv_dir/0]).
 
 -include("internal.hrl").
 
@@ -27,3 +28,10 @@ resolve(#ub_question{} = Q) ->
 
 cancel(Ref) ->
     unbound_server:cancel(unbound, Ref).
+
+priv_dir() ->
+    case code:priv_dir(unbound) of
+        List when is_list(List) -> List;
+        {error, bad_name} ->
+            filename:join(filename:dirname(code:which(?MODULE)), "../priv")
+    end.

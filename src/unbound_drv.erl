@@ -33,7 +33,7 @@ load() ->
     case lists:member(?DRIVER_NAME, Drivers) of
         true -> ok;
         false ->
-            case erl_ddll:load(priv_dir(), ?DRIVER_NAME) of
+            case erl_ddll:load(unbound:priv_dir(), ?DRIVER_NAME) of
             ok -> ok;
             {error, Error} ->
                 error_logger:error_msg(
@@ -109,15 +109,6 @@ set_option(Port, Key, Value) when is_port(Port) andalso
 version(Port) ->
     erlang:port_call(Port, ?DRV_VERSION, nil).
 
-% internal
-
-priv_dir() ->
-    case code:priv_dir(unbound) of
-        List when is_list(List) -> List;
-        {error, bad_name} ->
-            filename:join(filename:dirname(code:which(?MODULE)), "../priv")
-    end.
-
 -ifdef(TEST).
 
 cancel_valid_test() ->
@@ -170,7 +161,7 @@ ta_test() ->
 
 ta_file_test() ->
     {ok, Port} = open(),
-    RootKey = iolist_to_binary(filename:join(priv_dir(), "root.key")),
+    RootKey = iolist_to_binary(filename:join(unbound:priv_dir(), "root.key")),
     ok = add_ta_file(Port, RootKey),
     {ok, Id} = resolve(Port, #ub_question{
         name = <<"nlnetlabs.nl.">>,
@@ -186,8 +177,8 @@ ta_file_test() ->
 
 ta_autr_test() ->
     {ok, Port} = open(),
-    RootKey = iolist_to_binary(filename:join(priv_dir(), "root.key")),
-    TempKey = iolist_to_binary(filename:join(priv_dir(), "root.key.eunit")),
+    RootKey = iolist_to_binary(filename:join(unbound:priv_dir(), "root.key")),
+    TempKey = iolist_to_binary(filename:join(unbound:priv_dir(), "root.key.eunit")),
     {ok, _} = file:copy(RootKey, TempKey),
     ok = add_ta_autr(Port, TempKey),
     {ok, Id} = resolve(Port, #ub_question{
@@ -227,7 +218,7 @@ set_fwd_test([{Addr, Nx}|Rest]) ->
     set_fwd_test(Rest).
 
 hosts_test() ->
-    HostsFile = iolist_to_binary(filename:join(priv_dir(), "hosts.eunit")),
+    HostsFile = iolist_to_binary(filename:join(unbound:priv_dir(), "hosts.eunit")),
     ok = file:write_file(HostsFile, <<"1.1.1.1 not-a-real-name-yet.">>),
     {ok, Port} = open(),
     ok = hosts(Port, HostsFile),
@@ -245,7 +236,7 @@ hosts_test() ->
     ok = file:delete(HostsFile).
 
 resolvconf_test() ->
-    ResolvConf = iolist_to_binary(filename:join(priv_dir(), "resolvconf.eunit")),
+    ResolvConf = iolist_to_binary(filename:join(unbound:priv_dir(), "resolvconf.eunit")),
     resolvconf_test(
         ResolvConf,
         [{"8.8.8.8", true},        % Google Public DNS
