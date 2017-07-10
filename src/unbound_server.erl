@@ -33,9 +33,9 @@ start_link() ->
     start_link(defaults()).
 
 start_link(Opts) when is_list(Opts) ->
-    case lists:keytake(register, 1, Opts) of
-        {value, {register, ServerName}, Opts0} ->
-            gen_server:start_link(ServerName, ?MODULE, Opts0, []);
+    case lists:keyfind(register, 1, Opts) of
+        {register, ServerName} ->
+            gen_server:start_link(ServerName, ?MODULE, Opts, []);
         false -> gen_server:start_link(?MODULE, Opts, [])
     end.
 
@@ -71,59 +71,57 @@ defaults() ->
 
 init(Opts) ->
     {ok, Port} = unbound_drv:open(),
-    init(Port, Opts).
+    IsMain = whereis(unbound) =:= self(),
+    init(Port, IsMain, Opts).
 
-init(Port, []) ->
+init(Port, _IsMain, []) ->
     {ok, #state{port = Port}};
-init(Port, [Opt|Opts]) ->
+init(Port, IsMain, [Opt|Opts]) ->
     [ ok = apply(unbound_drv, Function, [Port|Args])
-      || {Function, Args} <- init_drv_sig(Opt) ],
-    init(Port, Opts).
+      || {Function, Args} <- init_drv_sig(IsMain, Opt) ],
+    init(Port, IsMain, Opts).
 
-init_drv_sig({trust_anchor, auto}) ->
-    init_drv_sig({trust_anchor, {auto, {priv, "root.key"}}});
-init_drv_sig({trust_anchor, maintain}) ->
-    init_drv_sig({trust_anchor, {maintain, {priv, "root.key"}}});
-init_drv_sig({trust_anchor, read}) ->
-    init_drv_sig({trust_anchor, {maintain, {priv, "root.key"}}});
-init_drv_sig({trust_anchor, {auto, Path}}) ->
-    case whereis(unbound) =:= self() of
-        true -> init_drv_sig({trust_anchor, {maintain, Path}});
-        false -> init_drv_sig({trust_anchor, {read, Path}})
-    end;
-init_drv_sig({trust_anchor, {maintain, Path}}) ->
+init_drv_sig(_IsMain, {register, _ServerRef}) -> [];
+init_drv_sig(IsMain, {trust_anchor, auto}) ->
+    init_drv_sig(IsMain, {trust_anchor, {auto, {priv, "root.key"}}});
+init_drv_sig(IsMain, {trust_anchor, read}) ->
+    init_drv_sig(IsMain, {trust_anchor, {read, {priv, "root.key"}}});
+init_drv_sig(true, {trust_anchor, {auto, Path}}) ->
+    init_drv_sig(true, {trust_anchor, {maintain, Path}});
+init_drv_sig(false, {trust_anchor, {auto, Path}}) ->
+    init_drv_sig(false, {trust_anchor, {read, Path}});
+init_drv_sig(_IsMain, {trust_anchor, {maintain, Path}}) ->
     [{add_ta_autr, [init_drv_sig_path(Path)]}];
-init_drv_sig({trust_anchor, {read, Path}}) ->
+init_drv_sig(_IsMain, {trust_anchor, {read, Path}}) ->
     [{add_ta_file, [init_drv_sig_path(Path)]}];
-init_drv_sig({trust_anchor, Data}) ->
-    [{add_ta, [(Data)]}];
-init_drv_sig(hosts) ->
+init_drv_sig(_IsMain, {trust_anchor, Data}) ->
+    [{add_ta, [iolist_to_binary(Data)]}];
+init_drv_sig(_IsMain, hosts) ->
     [{hosts, []}];
-init_drv_sig({hosts, Path}) ->
+init_drv_sig(_IsMain, {hosts, Path}) ->
     [{hosts, [init_drv_sig_path(Path)]}];
-init_drv_sig(resolvconf) ->
-    [{resolv_conf, []}];
-init_drv_sig({resolvconf, Path}) ->
-    [{resolv_conf, init_drv_sig_path(Path)}];
-init_drv_sig({forwarders, Addrs})
+init_drv_sig(_IsMain, resolvconf) ->
+    [{resolvconf, []}];
+init_drv_sig(_IsMain, {resolvconf, Path}) ->
+    [{resolvconf, [init_drv_sig_path(Path)]}];
+init_drv_sig(_IsMain, {forwarders, Addrs})
     when is_list(Addrs)
           andalso not is_integer(hd(Addrs)) ->
-    [{set_fwd, case is_tuple(Addr) of
-        true -> iolist_to_binary(inet:ntoa(Addr));
-        false -> iolist_to_binary(Addr)
-      end} || Addr <- Addrs ];
-init_drv_sig({forwarders, Addr}) ->
-    init_drv_sig({forwarders, [Addr]}).
+    [{set_fwd, [init_drv_addr(Addr)]} || Addr <- Addrs ];
+init_drv_sig(_IsMain, {forwarders, Addr}) ->
+    [{set_fwd, [init_drv_addr(Addr)]}].
 
 init_drv_sig_path({priv, Path}) ->
-    PrivDir = case code:priv_dir(unbound) of
-        List when is_list(List) -> List;
-        {error, bad_name} ->
-            filename:join(filename:dirname(code:which(?MODULE)), "../priv")
-    end,
-    iolist_to_binary(filename:join(PrivDir, Path));
+    iolist_to_binary(filename:join(unbound:priv_dir(), Path));
 init_drv_sig_path(Path) ->
     iolist_to_binary(Path).
+
+init_drv_addr(Addr) when is_tuple(Addr) ->
+    S = inet:ntoa(Addr),
+    true = is_list(S),
+    iolist_to_binary(S);
+init_drv_addr(Addr) ->
+    iolist_to_binary(Addr).
 
 handle_call({resolve, #ub_question{} = Q}, {Pid, _},
             #state{port = Port, requests = Reqs} = State) ->
@@ -217,3 +215,95 @@ terminate(_Reason, #state{port = Port}) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+-ifdef(TEST).
+
+opt_register_test() ->
+    Cases = [{local, name}, {global, name}, {via, mod, name}],
+    opt_register_test(Cases).
+
+opt_register_test([]) -> ok;
+opt_register_test([Case|Cases]) ->
+    [] = init_drv_sig(false, {register, Case}),
+    opt_register_test(Cases).
+
+opt_trust_anchor_test() ->
+    PrivDir = unbound:priv_dir(),
+    DefaultKey = iolist_to_binary(filename:join(PrivDir, "root.key")),
+    Cases = [
+        {true, auto, [{add_ta_autr, [DefaultKey]}]},
+        {false, auto, [{add_ta_file, [DefaultKey]}]},
+        {false, read, [{add_ta_file, [DefaultKey]}]},
+        {true, {auto, {priv, "root.key"}}, [{add_ta_autr, [DefaultKey]}]},
+        {false, {auto, {priv, "root.key"}}, [{add_ta_file, [DefaultKey]}]},
+        {false, {maintain, {priv, "root.key"}}, [{add_ta_autr, [DefaultKey]}]},
+        {false, {read, {priv, "root.key"}}, [{add_ta_file, [DefaultKey]}]},
+        {true, {auto, "path"}, [{add_ta_autr, [<<"path">>]}]},
+        {false, {auto, "path"}, [{add_ta_file, [<<"path">>]}]},
+        {false, {read, "path"}, [{add_ta_file, [<<"path">>]}]},
+        {false, {maintain, "path"}, [{add_ta_autr, [<<"path">>]}]},
+        {false, "data", [{add_ta, [<<"data">>]}]},
+        {false, <<"data">>, [{add_ta, [<<"data">>]}]}
+    ],
+    opt_trust_anchor_test(Cases).
+
+opt_trust_anchor_test([]) -> ok;
+opt_trust_anchor_test([{IsMain, In, Out}|Cases]) ->
+    Out = init_drv_sig(IsMain, {trust_anchor, In}),
+    opt_trust_anchor_test(Cases).
+
+opt_hosts_test() ->
+    PrivDir = unbound:priv_dir(),
+    PrivDirHosts = iolist_to_binary(filename:join(PrivDir, "hosts")),
+    Cases = [{hosts, []},
+             {{hosts, {priv, "hosts"}}, [PrivDirHosts]},
+             {{hosts, "path"}, [<<"path">>]},
+             {{hosts, <<"path">>}, [<<"path">>]}],
+    opt_hosts_test(Cases).
+
+opt_hosts_test([]) -> ok;
+opt_hosts_test([{In, Out}|Cases]) ->
+    Expect = [{hosts, Out}],
+    Expect = init_drv_sig(false, In),
+    opt_hosts_test(Cases).
+
+opt_resolvconf_test() ->
+    PrivDir = unbound:priv_dir(),
+    PrivDirConf = iolist_to_binary(filename:join(PrivDir, "resolv.conf")),
+    Cases = [{resolvconf, []},
+             {{resolvconf, {priv, "resolv.conf"}}, [PrivDirConf]},
+             {{resolvconf, "path"}, [<<"path">>]},
+             {{resolvconf, <<"path">>}, [<<"path">>]}],
+    opt_resolvconf_test(Cases).
+
+opt_resolvconf_test([]) -> ok;
+opt_resolvconf_test([{In, Out}|Cases]) ->
+    Expect = [{resolvconf, Out}],
+    Expect = init_drv_sig(false, In),
+    opt_resolvconf_test(Cases).
+
+opt_forwarders_test() ->
+    Ipv4S = "127.0.0.1",
+    Ipv4B = list_to_binary(Ipv4S),
+    {ok, Ipv4T} = inet:parse_ipv4_address(Ipv4S),
+    Ipv6S = "::1",
+    Ipv6B = list_to_binary(Ipv6S),
+    {ok, Ipv6T} = inet:parse_ipv6_address(Ipv6S),
+    Ips = [Ipv4S, Ipv4B, Ipv4T, Ipv6S, Ipv6B, Ipv6T],
+    IpBs = [Ipv4B, Ipv4B, Ipv4B, Ipv6B, Ipv6B, Ipv6B],
+    Cases = [{Ipv4S, [Ipv4B]},
+             {Ipv4B, [Ipv4B]},
+             {Ipv4T, [Ipv4B]},
+             {Ipv6S, [Ipv6B]},
+             {Ipv6B, [Ipv6B]},
+             {Ipv6T, [Ipv6B]},
+             {Ips, IpBs}],
+    opt_forwarders_test(Cases).
+
+opt_forwarders_test([]) -> ok;
+opt_forwarders_test([{In, Out}|Cases]) ->
+    Expect = [{set_fwd, [X]} || X <- Out],
+    Expect = init_drv_sig(false, {forwarders, In}),
+    opt_forwarders_test(Cases).
+
+-endif.
