@@ -6,6 +6,7 @@
 // 4 dots for four labels. Three 63 and one 62 byte label.
 // Each label-byte is a \ddd escape.
 #define MAX_ASCII_NAME (4 + (63 * 4) + (62 * 4))
+
 #define UNBOUND_DRV_RESOLVE 1
 #define UNBOUND_DRV_CANCEL 2
 #define UNBOUND_DRV_ADD_TA 3
@@ -17,6 +18,8 @@
 #define UNBOUND_DRV_GET_OPT 9
 #define UNBOUND_DRV_SET_OPT 10
 #define UNBOUND_DRV_VERSION 11
+
+#define UNBOUND_DRV_REQUEST_MIN (2048/sizeof(request_t))
 
 typedef struct _request_t request_t;
 
@@ -91,14 +94,14 @@ static ErlDrvData start(ErlDrvPort port, char* cmd) {
         errno = ENOMEM;
         return ERL_DRV_ERROR_ERRNO;
     }
-    dd->requests = driver_alloc(sizeof(request_t));
+    dd->requests = driver_alloc(UNBOUND_DRV_REQUEST_MIN * sizeof(request_t));
     if (!dd->requests) {
         driver_free(dd);
         errno = ENOMEM;
         return ERL_DRV_ERROR_ERRNO;
     }
     dd->requests_len = 0;
-    dd->requests_cap = 1;
+    dd->requests_cap = UNBOUND_DRV_REQUEST_MIN;
     dd->ub_ctx = ub_ctx_create();
     if (!dd->ub_ctx) {
         driver_free(dd->requests);
@@ -148,6 +151,17 @@ static void stop(ErlDrvData edd) {
     ub_ctx_delete(dd->ub_ctx);
     driver_free(dd->requests);
     driver_free(dd);
+}
+
+static void shrink_requests(unbound_drv_t * dd) {
+    int new_cap = dd->requests_cap / 4;
+    if (dd->requests_len < new_cap && UNBOUND_DRV_REQUEST_MIN <= new_cap) {
+        request_t **new_requests = driver_realloc(dd->requests, new_cap * sizeof(request_t));
+        if (new_requests) {
+            dd->requests = new_requests;
+            dd->requests_cap = new_cap;
+        }
+    }
 }
 
 static int call_response_nomem_encode(char *rbuf)
@@ -324,6 +338,7 @@ static ErlDrvSSizeT call(ErlDrvData edd,
                 err = ub_cancel(dd->ub_ctx, r->id);
                 dd->requests[i] = dd->requests[--dd->requests_len];
                 driver_free(r);
+                shrink_requests(dd);
                 goto cancel_respond;
             }
         }
@@ -537,6 +552,7 @@ static void resolve_callback(void* arg, int err, struct ub_result* result)
         if (dd->requests[i] == r) {
             dd->requests[i] = dd->requests[--dd->requests_len];
             driver_free(r);
+            shrink_requests(dd);
             return;
         }
     }
