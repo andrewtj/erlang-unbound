@@ -63,9 +63,16 @@ cancel_noflush(ServerRef, AsyncRef) ->
 
 defaults() ->
     Args = application:get_env(unbound, server_defaults, []),
-    true = is_list(Args),
-    false = lists:keymember(register, 1, Args),
-    Args.
+    Ok = lists:all(fun(Arg) ->
+        case init_drv_sig(false, Arg) of
+            [{add_ta_autr, _}] -> false;
+            _ -> element(1, Arg) =/= register
+        end
+    end, Args),
+    case Ok of
+        true -> Args;
+        false -> erlang:error(badarg)
+    end.
 
 %% gen_server.
 
