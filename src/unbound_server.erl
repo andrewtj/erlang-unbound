@@ -63,16 +63,22 @@ cancel_noflush(ServerRef, AsyncRef) ->
 
 defaults() ->
     Args = application:get_env(unbound, server_defaults, []),
-    Ok = lists:all(fun(Arg) ->
-        case init_drv_sig(false, Arg) of
-            [{add_ta_autr, _}] -> false;
-            _ -> element(1, Arg) =/= register
-        end
-    end, Args),
+    Ok = lists:all(fun defaults_check_arg/1, Args),
     case Ok of
         true -> Args;
         false -> erlang:error(badarg)
     end.
+
+-ifdef(NO_TA_AUTR).
+defaults_check_arg(Arg) ->
+    element(1, Arg) =/= register.
+-else.
+defaults_check_arg(Arg) ->
+    case init_drv_sig(false, Arg) of
+        [{add_ta_autr, _}] -> false;
+        _ -> element(1, Arg) =/= register
+    end.
+-endif.
 
 %% gen_server.
 
@@ -89,20 +95,8 @@ init(Port, IsMain, [Opt|Opts]) ->
     init(Port, IsMain, Opts).
 
 init_drv_sig(_IsMain, {register, _ServerRef}) -> [];
-init_drv_sig(IsMain, {trust_anchor, auto}) ->
-    init_drv_sig(IsMain, {trust_anchor, {auto, {priv, "root.key"}}});
-init_drv_sig(IsMain, {trust_anchor, read}) ->
-    init_drv_sig(IsMain, {trust_anchor, {read, {priv, "root.key"}}});
-init_drv_sig(true, {trust_anchor, {auto, Path}}) ->
-    init_drv_sig(true, {trust_anchor, {maintain, Path}});
-init_drv_sig(false, {trust_anchor, {auto, Path}}) ->
-    init_drv_sig(false, {trust_anchor, {read, Path}});
-init_drv_sig(_IsMain, {trust_anchor, {maintain, Path}}) ->
-    [{add_ta_autr, [init_drv_sig_path(Path)]}];
-init_drv_sig(_IsMain, {trust_anchor, {read, Path}}) ->
-    [{add_ta_file, [init_drv_sig_path(Path)]}];
-init_drv_sig(_IsMain, {trust_anchor, Data}) ->
-    [{add_ta, [iolist_to_binary(Data)]}];
+init_drv_sig(IsMain, {trust_anchor, TA}) ->
+    init_drv_sig_ta(IsMain, TA);
 init_drv_sig(_IsMain, hosts) ->
     [{hosts, []}];
 init_drv_sig(_IsMain, {hosts, Path}) ->
@@ -123,6 +117,36 @@ init_drv_sig(IsMain, {K, V}) when is_list(V) andalso is_integer(hd(V)) ->
     init_drv_sig(IsMain, {K, iolist_to_binary(V)});
 init_drv_sig(_IsMain, {K, V}) when is_binary(K) andalso is_binary(V) ->
     [{set_option, [K, V]}].
+
+-ifdef(NO_TA_AUTR).
+init_drv_sig_ta(IsMain, auto) ->
+    init_drv_sig_ta(IsMain, {auto, {priv, "root.key"}});
+init_drv_sig_ta(IsMain, read) ->
+    init_drv_sig_ta(IsMain, {read, {priv, "root.key"}});
+init_drv_sig_ta(true, {auto, Path}) ->
+    init_drv_sig_ta(true, {read, Path});
+init_drv_sig_ta(false, {auto, Path}) ->
+    init_drv_sig_ta(false, {read, Path});
+init_drv_sig_ta(_IsMain, {read, Path}) ->
+    [{add_ta_file, [init_drv_sig_path(Path)]}];
+init_drv_sig_ta(_IsMain, Data) ->
+    [{add_ta, [iolist_to_binary(Data)]}].
+-else.
+init_drv_sig_ta(IsMain, auto) ->
+    init_drv_sig_ta(IsMain, {auto, {priv, "root.key"}});
+init_drv_sig_ta(IsMain, read) ->
+    init_drv_sig_ta(IsMain, {read, {priv, "root.key"}});
+init_drv_sig_ta(true, {auto, Path}) ->
+    init_drv_sig_ta(true, {maintain, Path});
+init_drv_sig_ta(false, {auto, Path}) ->
+    init_drv_sig_ta(false, {read, Path});
+init_drv_sig_ta(_IsMain, {maintain, Path}) ->
+    [{add_ta_autr, [init_drv_sig_path(Path)]}];
+init_drv_sig_ta(_IsMain, {read, Path}) ->
+    [{add_ta_file, [init_drv_sig_path(Path)]}];
+init_drv_sig_ta(_IsMain, Data) ->
+    [{add_ta, [iolist_to_binary(Data)]}].
+-endif.
 
 init_drv_sig_path({priv, Path}) ->
     iolist_to_binary(filename:join(unbound:priv_dir(), Path));
@@ -251,6 +275,25 @@ opt_register_test([Case|Cases]) ->
     [] = init_drv_sig(false, {register, Case}),
     opt_register_test(Cases).
 
+-ifdef(NO_TA_AUTR).
+opt_trust_anchor_test() ->
+    PrivDir = unbound:priv_dir(),
+    DefaultKey = iolist_to_binary(filename:join(PrivDir, "root.key")),
+    Cases = [
+        {true, auto, [{add_ta_file, [DefaultKey]}]},
+        {false, auto, [{add_ta_file, [DefaultKey]}]},
+        {false, read, [{add_ta_file, [DefaultKey]}]},
+        {true, {auto, {priv, "root.key"}}, [{add_ta_file, [DefaultKey]}]},
+        {false, {auto, {priv, "root.key"}}, [{add_ta_file, [DefaultKey]}]},
+        {false, {read, {priv, "root.key"}}, [{add_ta_file, [DefaultKey]}]},
+        {true, {auto, "path"}, [{add_ta_file, [<<"path">>]}]},
+        {false, {auto, "path"}, [{add_ta_file, [<<"path">>]}]},
+        {false, {read, "path"}, [{add_ta_file, [<<"path">>]}]},
+        {false, "data", [{add_ta, [<<"data">>]}]},
+        {false, <<"data">>, [{add_ta, [<<"data">>]}]}
+    ],
+    opt_trust_anchor_test(Cases).
+-else.
 opt_trust_anchor_test() ->
     PrivDir = unbound:priv_dir(),
     DefaultKey = iolist_to_binary(filename:join(PrivDir, "root.key")),
@@ -270,6 +313,7 @@ opt_trust_anchor_test() ->
         {false, <<"data">>, [{add_ta, [<<"data">>]}]}
     ],
     opt_trust_anchor_test(Cases).
+-endif.
 
 opt_trust_anchor_test([]) -> ok;
 opt_trust_anchor_test([{IsMain, In, Out}|Cases]) ->

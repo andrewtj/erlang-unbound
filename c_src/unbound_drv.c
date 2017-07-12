@@ -288,7 +288,9 @@ static ErlDrvSSizeT call(ErlDrvData edd,
         cancel_respond:
             return call_response_err(rbuf, rlen, err);
         case UNBOUND_DRV_ADD_TA:
+#ifndef NO_TA_AUTR
         case UNBOUND_DRV_ADD_TA_AUTR:
+#endif
         case UNBOUND_DRV_ADD_TA_FILE:
         case UNBOUND_DRV_SET_FWD:
             if (term.ei_type != ERL_BINARY_EXT) {
@@ -302,8 +304,10 @@ static ErlDrvSSizeT call(ErlDrvData edd,
             arg[arg_size] = 0;
             if (cmd == UNBOUND_DRV_ADD_TA) {
                 err = ub_ctx_add_ta(dd->ub_ctx, arg);
+#ifndef NO_TA_AUTR
             } else if (cmd == UNBOUND_DRV_ADD_TA_AUTR) {
                 err = ub_ctx_add_ta_autr(dd->ub_ctx, arg);
+#endif
             } else if (cmd == UNBOUND_DRV_ADD_TA_FILE) {
                 err = ub_ctx_add_ta_file(dd->ub_ctx, arg);
             } else {  // cmd == UNBOUND_DRV_SET_FWD

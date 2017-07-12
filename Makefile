@@ -12,5 +12,14 @@ include erlang.mk
 
 $(PROJECT).d:: include/params.hrl
 
+ifdef NO_TA_AUTR
+ERLC_OPTS += -DNO_TA_AUTR
+CFLAGS += -DNO_TA_AUTR
+TEST_ERLC_OPTS += -DNO_TA_AUTR
+endif
+
+clean::
+	$(gen_verbose) rm -f include/params.hrl
+
 include/params.hrl: support/dns-parameters-4.csv ./support/gen_params.escript
 	$(gen_verbose) ./support/gen_params.escript $@

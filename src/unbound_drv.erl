@@ -5,7 +5,11 @@
 -export([open/0, close/1]).
 -export([load/0, unload/0]).
 -export([resolve/2, cancel/2]).
+-ifdef(NO_TA_AUTR).
+-export([add_ta/2, add_ta_file/2]).
+-else.
 -export([add_ta/2, add_ta_autr/2, add_ta_file/2]).
+-endif.
 -export([hosts/1, hosts/2]).
 -export([resolvconf/1, resolvconf/2]).
 -export([set_fwd/2]).
@@ -77,8 +81,10 @@ cancel(Port, Id) when is_port(Port) andalso is_integer(Id) ->
 add_ta(Port, TA) when is_port(Port) andalso is_binary(TA) ->
     erlang:port_call(Port, ?DRV_ADD_TA, TA).
 
+-ifndef(NO_TA_AUTR).
 add_ta_autr(Port, File) when is_port(Port) andalso is_binary(File) ->
     erlang:port_call(Port, ?DRV_ADD_TA_AUTR, File).
+-endif.
 
 add_ta_file(Port, File) when is_port(Port) andalso is_binary(File) ->
     erlang:port_call(Port, ?DRV_ADD_TA_FILE, File).
@@ -175,6 +181,7 @@ ta_file_test() ->
                                   Result),
     ok = close(Port).
 
+-ifndef(NO_TA_AUTR).
 ta_autr_test() ->
     {ok, Port} = open(),
     RootKey = iolist_to_binary(filename:join(unbound:priv_dir(), "root.key")),
@@ -193,6 +200,7 @@ ta_autr_test() ->
                                   Result),
     ok = close(Port),
     ok = file:delete(TempKey).
+-endif.
 
 set_fwd_test() ->
     set_fwd_test(
