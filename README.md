@@ -1,7 +1,12 @@
 # erlang-unbound
 
-An Erlang interface to NLnet Lab's libunbound. libunbound provides a DNS
+License: [BSD-2-Clause](LICENSE)
+
+This is an Erlang interface to NLnet Lab's
+[libunbound](https://unbound.nlnetlabs.nl/). libunbound provides a DNS
 resolver including cache and DNSSEC validation.
+
+This software was developed as part of the [arpa2](http://arpa2.net) project.
 
 ## Overview
 
