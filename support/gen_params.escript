@@ -20,7 +20,11 @@ main(Args) ->
 -define(UB_CL_HS, 4).
 ", []),
     ok = scrape(In, Out),
-    ok = io:fwrite(Out, "-endif.~n", []).
+    ok = io:fwrite(Out, "-endif.~n", []),
+    case Out of
+        standard_io -> erlang:halt(0);
+        _ -> file:close(Out)
+    end.
 
 scrape(In, Out) ->
     case file:read_line(In) of
