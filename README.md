@@ -136,7 +136,7 @@ Type and `Class` representing a DNS Class. It constructs a `#ub_question{}`
 `resolve(ServerRef, #ub_question{} = Q)` in the success case returns
 `{ok, Ref}` where `Ref` is an opaque identifier for the request. When an
 answer becomes available it will be delivered to the calling process as a
-`ub_callback{}`.
+`#ub_callback{}`.
 
 `cancel(ServerRef, Ref)` takes a `Ref` as returned by `resolve` and cancels
 the associated resolve request.
