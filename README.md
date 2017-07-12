@@ -11,6 +11,10 @@ opened and controlled via the `unbound_drv` module. On top of `unbound_drv`,
 client crash. An instance of `unbound_server` maintained by the application's
 server is also made available via the `unbound` module.
 
+### Build options
+
+Use of `ub_ctx_add_ta_autr` can be disabled by setting `NO_TA_AUTR=1`.
+
 ## Configuration
 
 The default configuration for `unbound_server` is specified by the
@@ -31,12 +35,12 @@ to include process registration (`{register, _}`) or trust anchor maintain
   `TrustAnchorSpec` must be one of:
   * `auto` - uses the key root.key contained in the applications priv dir. If
     the server is started by the application supervisor it will maintain the
-    trust anchor
+    trust anchor. With `NO_TA_AUTR=1` set this option is equivalent to `read`.
   * `{auto, PathSpec}` as above with a key located at `PathSpec`
   * `read` uses the key root.key contained in the applications priv dir
   * `{read, PathSpec}` as above with a key located at `PathSpec`
-  * `{maintain, PathSpec}` uses and maintains a key located at `PathSpec`
-    (not valid as a default)
+  * `{maintain, PathSpec}` uses and maintains a key located at `PathSpec`.
+    This option is not valid as a default or if `NO_TA_AUTR=1` is set.
   * a binary string or string containing a trust anchor
 * `resolvconf` reads a list of hosts to forward queries to from the systems
   resolv.conf
