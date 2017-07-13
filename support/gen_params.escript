@@ -30,7 +30,7 @@ scrape(In, Out) ->
     case file:read_line(In) of
         eof -> ok;
         {ok, Data} ->
-            [MaybeTy, MaybeVal|_] = string:split(Data, ",", all),
+            [MaybeTy, MaybeVal|_] = string:tokens(Data, ","),
             case {parse_ty(MaybeTy), parse_val(MaybeVal)} of
                 {A, B} when A =:= false orelse B =:= false -> scrape(In, Out);
                 {Ty, Val} ->
